@@ -15,9 +15,9 @@ data:
   input_images: 1
   origin_distances: false
 opt:
-  iterations: 800001
+  iterations: 1 #800001
   base_lr: 0.00005
-  batch_size: 8
+  batch_size: 1
   betas:
     - 0.9
     - 0.999
@@ -54,7 +54,7 @@ model:
   isotropic: false
 
 logging:
-  ckpt_iterations: 1000
+  ckpt_iterations: 200
   val_log: 10000
   loss_log: 10
   loop_log: 10000

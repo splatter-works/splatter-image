@@ -30,7 +30,7 @@ from huggingface_hub import hf_hub_download
 @torch.no_grad()
 def main():
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     device = torch.device("cuda:0")
     torch.cuda.set_device(device)
 
@@ -40,8 +40,9 @@ def main():
                     "gradio_config.yaml"
                     ))
 
-    model_path = hf_hub_download(repo_id="szymanowiczs/splatter-image-multi-category-v1", 
-                                filename="model_latest.pth")
+    # model_path = hf_hub_download(repo_id="szymanowiczs/splatter-image-multi-category-v1", 
+                                # filename="model_latest.pth")
+    # model_path = "experiments_out/2025-01-19/19-44-09/model_latest.pth"
 
     model = GaussianSplatPredictor(model_cfg)
 
