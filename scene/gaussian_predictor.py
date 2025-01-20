@@ -273,24 +273,24 @@ class UNetBlock(torch.nn.Module):
 
 
 #----------------------------------------------------------------------------
-# CLIP
-class ClipHandler(nn.Module):
+# CLOOB
+class CLOOBHandler(nn.Module):
     def __init__(self, device="cuda"):
-        super(ClipHandler, self).__init__()
-        self.clip_model, self.preprocess = clip.load("ViT-B/32", device=device)
+        super(CLOOBHandler, self).__init__()
+        self.cloob_model, self.preprocess = clip.load("ViT-B/32", device=device)
         self.device = device
-        self.clip_model.eval()
+        self.cloob_model.eval()
 
-        for param in self.clip_model.parameters():
+        for param in self.cloob_model.parameters():
             param.requires_grad = False
 
     def forward(self, input_images):
         """
-        Generate CLIP embeddings for input images.
+        Generate CLOOB embeddings for input images.
         Args:
             input_images (torch.Tensor): Input tensor of shape [B, 1, 4, H, W].
         Returns:
-            torch.Tensor: CLIP embeddings of shape [B, 512].
+            torch.Tensor: CLOOB embeddings of shape [B, 512].
         """
         input_images = input_images.mean(dim=2)  # Shape: [B, 1, H, W]
 
@@ -300,7 +300,7 @@ class ClipHandler(nn.Module):
         # Step 3: Convert to range [0, 1]
         rgb_image = (rgb_image - rgb_image.min()) / (rgb_image.max() - rgb_image.min() + 1e-5)
 
-        # Step 4: Apply CLIP preprocessing pipeline
+        # Step 4: Apply CLOOB preprocessing pipeline
         preprocess_transform = T.Compose([
             T.Resize((224, 224)),
             T.Normalize(mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711]),
@@ -312,9 +312,9 @@ class ClipHandler(nn.Module):
 
         # Step 6: Compute embeddings
         with torch.no_grad():
-            clip_embeddings = self.clip_model.encode_image(rgb_image)  # Shape: [B, 512]
+            cloob_embeddings = self.cloob_model.encode_image(rgb_image)  # Shape: [B, 512]
 
-        return clip_embeddings
+        return cloob_embeddings
 
 
 
@@ -355,7 +355,7 @@ class SongUNet(nn.Module):
         super().__init__()
         self.label_dropout = label_dropout
         self.emb_dim_in = emb_dim_in
-        self.clip_projector = nn.Linear(512, 256)
+        self.cloob_projector = nn.Linear(512, 256)
         self.channel_reducer = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=1)
         if emb_dim_in > 0:
             emb_channels = model_channels * channel_mult_emb
@@ -429,7 +429,7 @@ class SongUNet(nn.Module):
                 self.dec[f'{res}x{res}_aux_norm'] = GroupNorm(num_channels=cout, eps=1e-6)
                 self.dec[f'{res}x{res}_aux_conv'] = Conv2d(in_channels=cout, out_channels=out_channels, kernel=3, init_weight=0.2, **init)# init_zero)
 
-    def forward(self, x, film_camera_emb=None, N_views_xa=1, clip_embeddings=None):
+    def forward(self, x, film_camera_emb=None, N_views_xa=1, pretr_embeddings=None):
 
         emb = None
 
@@ -457,29 +457,14 @@ class SongUNet(nn.Module):
                 skips.append(x)
 
 
-        # print("THIS IS LINE 415 ON GAUSSIAN PREDICTOR")
-        # print("printing the shape after the encoder", x.shape)
+        pretr_embeddings = pretr_embeddings.to(self.cloob_projector.weight.dtype)  # Match dtype
+        pretr_features = self.cloob_projector(pretr_embeddings)
+        pretr_features = pretr_features.unsqueeze(2).unsqueeze(3)  # Shape: [batch_size, 256, 1, 1]
+        pretr_features = pretr_features.expand(-1, -1, x.shape[2], x.shape[3])  # Shape: [batch_size, 256, 16, 16]
 
-        # Bottleneck: Fuse CLIP embeddings
-        # if clip_embeddings is not None:
-        # print("Fusing the CLIP embeddings")
-        # print("CLIP EMBEDDINGS SHAPE", clip_embeddings.shape)
-        # print("type clip_embeddings", type(clip_embeddings))
-        # print("type x", type(x))
-        # print("x.shape", x.shape)
-
-
-        # clip_features = self.clip_projector(clip_embeddings).unsqueeze(2).unsqueeze(3)
-        # x = x + clip_features
-        clip_embeddings = clip_embeddings.to(self.clip_projector.weight.dtype)  # Match dtype
-        clip_features = self.clip_projector(clip_embeddings)
-        clip_features = clip_features.unsqueeze(2).unsqueeze(3)  # Shape: [batch_size, 256, 1, 1]
-        clip_features = clip_features.expand(-1, -1, x.shape[2], x.shape[3])  # Shape: [batch_size, 256, 16, 16]
-
-        # print("final clip.shape", clip_features.shape)
 
         # Step 4: Fuse with x
-        x = torch.cat([x, clip_features], dim=1) 
+        x = torch.cat([x, pretr_features], dim=1) 
         x = self.channel_reducer(x)  # Shape: [1, 256, 16, 16]
 
 
@@ -542,9 +527,9 @@ class SingleImageSongUNetPredictor(nn.Module):
                 self.out.bias[start_channels:start_channels+out_channel], b)
             start_channels += out_channel
 
-    def forward(self, x, clip_embeddings=None, film_camera_emb=None, N_views_xa=1):
+    def forward(self, x, pretr_embeddings=None, film_camera_emb=None, N_views_xa=1):
         x = self.encoder(x,
-                         clip_embeddings=clip_embeddings,
+                         pretr_embeddings=pretr_embeddings,
                          film_camera_emb=film_camera_emb,
                          N_views_xa=N_views_xa)
 
@@ -560,7 +545,7 @@ class GaussianSplatPredictor(nn.Module):
     def __init__(self, cfg):
         super(GaussianSplatPredictor, self).__init__()
         self.cfg = cfg
-        self.clip_model = ClipHandler()
+        self.pretr_model = CLOOBHandler()
         assert cfg.model.network_with_offset or cfg.model.network_without_offset, \
             "Need at least one network"
 
@@ -773,8 +758,8 @@ class GaussianSplatPredictor(nn.Module):
         
         print("I'M IN THE FORWARD FUNCTION", x)
         print("shape", x.shape)
-        clip_embeddings = self.clip_model(x)
-        print("CLIP SHAPE : ", clip_embeddings.shape)
+        cloob_embeddings = self.cloob_model(x)
+        print("CLOOB SHAPE : ", cloob_embeddings.shape)
 
         B = x.shape[0]
         N_views = x.shape[1]
@@ -810,7 +795,7 @@ class GaussianSplatPredictor(nn.Module):
         if self.cfg.model.network_with_offset:
 
             split_network_outputs = self.network_with_offset(x,
-                                                             clip_embeddings=clip_embeddings,
+                                                             cloob_embeddings=cloob_embeddings,
                                                              film_camera_emb=film_camera_emb,
                                                              N_views_xa=N_views_xa
                                                              )
@@ -824,7 +809,7 @@ class GaussianSplatPredictor(nn.Module):
 
         else:
             split_network_outputs = self.network_wo_offset(x,
-                                                           clip_embeddings=clip_embeddings,
+                                                           cloob_embeddings=cloob_embeddings,
                                                            film_camera_emb=film_camera_emb,
                                                            N_views_xa=N_views_xa
                                                            ).split(self.split_dimensions_without_offset, dim=1)
