@@ -138,7 +138,7 @@ def main(cfg: DictConfig):
                             persistent_workers=persistent_workers)
 
     # val_dataset = get_dataset(cfg, "val")
-    val_dataloader = DataLoader(dataset, 
+    val_dataloader = DataLoader(subset_dataset, 
                                 batch_size=1,
                                 shuffle=False,
                                 num_workers=1,
@@ -146,7 +146,7 @@ def main(cfg: DictConfig):
                                 pin_memory=True)
 
     # test_dataset = get_dataset(cfg, "vis")
-    test_dataloader = DataLoader(dataset, 
+    test_dataloader = DataLoader(subset_dataset, 
                                  batch_size=1,
                                  shuffle=True)
     
