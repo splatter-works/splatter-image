@@ -3,7 +3,6 @@ import torch.nn as nn
 import torchvision 
 import torchvision.transforms as T
 
-import clip
 import numpy as np
 import torch
 from torch.nn.functional import silu
@@ -273,41 +272,41 @@ class UNetBlock(torch.nn.Module):
 
 
 #----------------------------------------------------------------------------
-# CLIP
-class ClipHandler(nn.Module):
+# DINOv2
+class DINOHandler(nn.Module):
     def __init__(self, device="cuda"):
-        super(ClipHandler, self).__init__()
-        self.clip_model, self.preprocess = clip.load("ViT-B/32", device=device)
+        super(DINOHandler, self).__init__()
+        self.dino_model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14_reg_lc')
         self.device = device
-        self.clip_model.eval()
+        self.dino_model.eval()
 
-        for param in self.clip_model.parameters():
+        for param in self.dino_model.parameters():
             param.requires_grad = False
 
     def forward(self, input_images):
         """
-        Generate CLIP embeddings for input images.
+        Generate DINOv2 embeddings for input images.
         Args:
             input_images (torch.Tensor): Input tensor of shape [B, 1, 4, H, W].
         Returns:
-            torch.Tensor: CLIP embeddings of shape [B, 512].
+            torch.Tensor: DINOv2 embeddings of shape [B, 512].
         """
 
         # Remove depth dimension
         input_images = input_images[:, :, :3, ...].squeeze(1)
 
-        # Apply CLIP preprocessing pipeline
+        # Apply DINOv2 preprocessing pipeline
         preprocess_transform = T.Compose([
             T.Resize((224, 224)),
-            T.Normalize(mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711]),
+            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), # ImatgeNet distrbution
         ])
         input_images = preprocess_transform(input_images)  # Shape: [B, 3, 224, 224]
 
         # Compute embeddings
         with torch.no_grad():
-            clip_embeddings = self.clip_model.encode_image(input_images)  # Shape: [B, 512]
+            dino_embeddings = self.dino_model(input_images)  # Shape: [B, 1000]
 
-        return clip_embeddings
+        return dino_embeddings
 
 
 
@@ -348,7 +347,7 @@ class SongUNet(nn.Module):
         super().__init__()
         self.label_dropout = label_dropout
         self.emb_dim_in = emb_dim_in
-        self.clip_projector = nn.Linear(512, 256)
+        self.dino_projector = nn.Linear(1000, 256)
         self.channel_reducer = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=1)
         if emb_dim_in > 0:
             emb_channels = model_channels * channel_mult_emb
@@ -422,7 +421,7 @@ class SongUNet(nn.Module):
                 self.dec[f'{res}x{res}_aux_norm'] = GroupNorm(num_channels=cout, eps=1e-6)
                 self.dec[f'{res}x{res}_aux_conv'] = Conv2d(in_channels=cout, out_channels=out_channels, kernel=3, init_weight=0.2, **init)# init_zero)
 
-    def forward(self, x, film_camera_emb=None, N_views_xa=1, clip_embeddings=None):
+    def forward(self, x, film_camera_emb=None, N_views_xa=1, dino_embeddings=None):
 
         emb = None
 
@@ -450,15 +449,13 @@ class SongUNet(nn.Module):
                 skips.append(x)
 
 
-        # clip_features = self.clip_projector(clip_embeddings).unsqueeze(2).unsqueeze(3)
-        # x = x + clip_features
-        clip_embeddings = clip_embeddings.to(self.clip_projector.weight.dtype)  # Match dtype
-        clip_features = self.clip_projector(clip_embeddings)
-        clip_features = clip_features.unsqueeze(2).unsqueeze(3)  # Shape: [batch_size, 256, 1, 1]
-        clip_features = clip_features.expand(-1, -1, x.shape[2], x.shape[3])  # Shape: [batch_size, 256, 16, 16]
+        dino_embeddings = dino_embeddings.to(self.dino_projector.weight.dtype)  # Match dtype
+        dino_features = self.dino_projector(dino_embeddings)
+        dino_features = dino_features.unsqueeze(2).unsqueeze(3)  # Shape: [batch_size, 256, 1, 1]
+        dino_features = dino_features.expand(-1, -1, x.shape[2], x.shape[3])  # Shape: [batch_size, 256, 16, 16]
 
         # Step 4: Fuse with x
-        x = torch.cat([x, clip_features], dim=1) 
+        x = torch.cat([x, dino_features], dim=1) 
         x = self.channel_reducer(x)  # Shape: [1, 256, 16, 16]
 
         # Decoder.
@@ -517,9 +514,9 @@ class SingleImageSongUNetPredictor(nn.Module):
                 self.out.bias[start_channels:start_channels+out_channel], b)
             start_channels += out_channel
 
-    def forward(self, x, clip_embeddings=None, film_camera_emb=None, N_views_xa=1):
+    def forward(self, x, dino_embeddings=None, film_camera_emb=None, N_views_xa=1):
         x = self.encoder(x,
-                         clip_embeddings=clip_embeddings,
+                         dino_embeddings=dino_embeddings,
                          film_camera_emb=film_camera_emb,
                          N_views_xa=N_views_xa)
 
@@ -535,7 +532,7 @@ class GaussianSplatPredictor(nn.Module):
     def __init__(self, cfg):
         super(GaussianSplatPredictor, self).__init__()
         self.cfg = cfg
-        self.clip_model = ClipHandler()
+        self.dino_model = DINOHandler()
         assert cfg.model.network_with_offset or cfg.model.network_without_offset, \
             "Need at least one network"
 
@@ -746,7 +743,7 @@ class GaussianSplatPredictor(nn.Module):
                 focals_pixels=None,
                 activate_output=True):
         
-        clip_embeddings = self.clip_model(x)
+        dino_embeddings = self.dino_model(x)
 
         B = x.shape[0]
         N_views = x.shape[1]
@@ -782,7 +779,7 @@ class GaussianSplatPredictor(nn.Module):
         if self.cfg.model.network_with_offset:
 
             split_network_outputs = self.network_with_offset(x,
-                                                             clip_embeddings=clip_embeddings,
+                                                             dino_embeddings=dino_embeddings,
                                                              film_camera_emb=film_camera_emb,
                                                              N_views_xa=N_views_xa
                                                              )
@@ -796,7 +793,7 @@ class GaussianSplatPredictor(nn.Module):
 
         else:
             split_network_outputs = self.network_wo_offset(x,
-                                                           clip_embeddings=clip_embeddings,
+                                                           dino_embeddings=dino_embeddings,
                                                            film_camera_emb=film_camera_emb,
                                                            N_views_xa=N_views_xa
                                                            ).split(self.split_dimensions_without_offset, dim=1)
