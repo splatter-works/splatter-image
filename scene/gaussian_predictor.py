@@ -292,27 +292,20 @@ class ClipHandler(nn.Module):
         Returns:
             torch.Tensor: CLIP embeddings of shape [B, 512].
         """
-        input_images = input_images.mean(dim=2)  # Shape: [B, 1, H, W]
 
-        # Step 2: Convert grayscale to RGB
-        rgb_image = input_images.repeat(1, 3, 1, 1)  # Shape: [B, 3, H, W]
+        # Remove depth dimension
+        input_images = input_images[:, :, :3, ...].squeeze(1)
 
-        # Step 3: Convert to range [0, 1]
-        rgb_image = (rgb_image - rgb_image.min()) / (rgb_image.max() - rgb_image.min() + 1e-5)
-
-        # Step 4: Apply CLIP preprocessing pipeline
+        # Apply CLIP preprocessing pipeline
         preprocess_transform = T.Compose([
             T.Resize((224, 224)),
             T.Normalize(mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711]),
         ])
-        rgb_image = preprocess_transform(rgb_image)  # Shape: [B, 3, 224, 224]
+        input_images = preprocess_transform(input_images)  # Shape: [B, 3, 224, 224]
 
-        # Step 5: Move to GPU
-        rgb_image = rgb_image.to("cuda")
-
-        # Step 6: Compute embeddings
+        # Compute embeddings
         with torch.no_grad():
-            clip_embeddings = self.clip_model.encode_image(rgb_image)  # Shape: [B, 512]
+            clip_embeddings = self.clip_model.encode_image(input_images)  # Shape: [B, 512]
 
         return clip_embeddings
 
@@ -457,18 +450,6 @@ class SongUNet(nn.Module):
                 skips.append(x)
 
 
-        # print("THIS IS LINE 415 ON GAUSSIAN PREDICTOR")
-        # print("printing the shape after the encoder", x.shape)
-
-        # Bottleneck: Fuse CLIP embeddings
-        # if clip_embeddings is not None:
-        # print("Fusing the CLIP embeddings")
-        # print("CLIP EMBEDDINGS SHAPE", clip_embeddings.shape)
-        # print("type clip_embeddings", type(clip_embeddings))
-        # print("type x", type(x))
-        # print("x.shape", x.shape)
-
-
         # clip_features = self.clip_projector(clip_embeddings).unsqueeze(2).unsqueeze(3)
         # x = x + clip_features
         clip_embeddings = clip_embeddings.to(self.clip_projector.weight.dtype)  # Match dtype
@@ -476,15 +457,9 @@ class SongUNet(nn.Module):
         clip_features = clip_features.unsqueeze(2).unsqueeze(3)  # Shape: [batch_size, 256, 1, 1]
         clip_features = clip_features.expand(-1, -1, x.shape[2], x.shape[3])  # Shape: [batch_size, 256, 16, 16]
 
-        # print("final clip.shape", clip_features.shape)
-
         # Step 4: Fuse with x
         x = torch.cat([x, clip_features], dim=1) 
         x = self.channel_reducer(x)  # Shape: [1, 256, 16, 16]
-
-
-        # print("concatination worked")
-        print(x.shape)
 
         # Decoder.
         aux = None
@@ -771,10 +746,7 @@ class GaussianSplatPredictor(nn.Module):
                 focals_pixels=None,
                 activate_output=True):
         
-        print("I'M IN THE FORWARD FUNCTION", x)
-        print("shape", x.shape)
         clip_embeddings = self.clip_model(x)
-        print("CLIP SHAPE : ", clip_embeddings.shape)
 
         B = x.shape[0]
         N_views = x.shape[1]
