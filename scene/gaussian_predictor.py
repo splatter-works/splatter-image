@@ -434,10 +434,10 @@ class SingleImageSongUNetPredictor(nn.Module):
         self.out_channels = out_channels
         self.cfg = cfg
         if cfg.cam_embd.embedding is None:
-            in_channels = 3
+            in_channels = 4
             emb_dim_in = 0
         else:
-            in_channels = 3
+            in_channels = 4
             emb_dim_in = 6 * cfg.cam_embd.dimension
 
         self.encoder = SongUNet(cfg.data.training_resolution, 
@@ -712,7 +712,6 @@ class GaussianSplatPredictor(nn.Module):
         x = x.reshape(B*N_views, *x.shape[2:])
         if self.cfg.data.origin_distances:
             const_offset = x[:, 3:, ...]
-            x = x[:, :3, ...]
         else:
             const_offset = None
 
