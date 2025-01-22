@@ -1,6 +1,6 @@
 # @package _global_
 opt:
   iterations: 5001
-  pretrained_ckpt: experiments/out...
+  pretrained_ckpt: /cluster/52/josep/splatter-image/experiments_out/2025-01-22/03-56-52
   lambda_lpips: 0.01
   base_lr: 0.000005
