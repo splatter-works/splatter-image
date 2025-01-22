@@ -278,7 +278,7 @@ class CLOOBHandler(nn.Module):
     def __init__(self, device="cuda"):
         super(CLOOBHandler, self).__init__()
         config = pretrained.get_config('cloob_laion_400m_vit_b_16_16_epochs')
-        self.cloob_model = model_pt.get_pt_model(config, device=device)
+        self.cloob_model = model_pt.get_pt_model(config).to(device)
         checkpoint = pretrained.download_checkpoint(config)
         self.cloob_model.load_state_dict(model_pt.get_pt_params(config, checkpoint))
         self.cloob_model.eval().requires_grad_(False).to(device)
