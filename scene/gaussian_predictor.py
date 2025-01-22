@@ -426,7 +426,7 @@ class SongUNet(nn.Module):
                 self.dec[f'{res}x{res}_aux_norm'] = GroupNorm(num_channels=cout, eps=1e-6)
                 self.dec[f'{res}x{res}_aux_conv'] = Conv2d(in_channels=cout, out_channels=out_channels, kernel=3, init_weight=0.2, **init)# init_zero)
 
-    def forward(self, x, film_camera_emb=None, N_views_xa=1, pretr_embeddings=None):
+    def forward(self, x, film_camera_emb=None, N_views_xa=1, cloob_embeddings=None):
 
         emb = None
 
@@ -454,14 +454,14 @@ class SongUNet(nn.Module):
                 skips.append(x)
 
 
-        pretr_embeddings = pretr_embeddings.to(self.cloob_projector.weight.dtype)  # Match dtype
-        pretr_features = self.cloob_projector(pretr_embeddings)
-        pretr_features = pretr_features.unsqueeze(2).unsqueeze(3)  # Shape: [batch_size, 256, 1, 1]
-        pretr_features = pretr_features.expand(-1, -1, x.shape[2], x.shape[3])  # Shape: [batch_size, 256, 16, 16]
+        cloob_embeddings = cloob_embeddings.to(self.cloob_projector.weight.dtype)  # Match dtype
+        cloob_features = self.cloob_projector(cloob_embeddings)
+        cloob_features = cloob_features.unsqueeze(2).unsqueeze(3)  # Shape: [batch_size, 256, 1, 1]
+        cloob_features = cloob_features.expand(-1, -1, x.shape[2], x.shape[3])  # Shape: [batch_size, 256, 16, 16]
 
 
         # Step 4: Fuse with x
-        x = torch.cat([x, pretr_features], dim=1) 
+        x = torch.cat([x, cloob_features], dim=1) 
         x = self.channel_reducer(x)  # Shape: [1, 256, 16, 16]
 
         # Decoder.
@@ -520,9 +520,9 @@ class SingleImageSongUNetPredictor(nn.Module):
                 self.out.bias[start_channels:start_channels+out_channel], b)
             start_channels += out_channel
 
-    def forward(self, x, pretr_embeddings=None, film_camera_emb=None, N_views_xa=1):
+    def forward(self, x, cloob_features=None, film_camera_emb=None, N_views_xa=1):
         x = self.encoder(x,
-                         pretr_embeddings=pretr_embeddings,
+                         cloob_features=cloob_features,
                          film_camera_emb=film_camera_emb,
                          N_views_xa=N_views_xa)
 
