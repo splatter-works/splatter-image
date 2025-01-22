@@ -3,13 +3,13 @@ import torch.nn as nn
 import torchvision 
 import torchvision.transforms as T
 
-import clip
 import numpy as np
 import torch
 from torch.nn.functional import silu
 
 from einops import rearrange, repeat
 
+from cloob_training import model_pt, pretrained
 from utils.general_utils import matrix_to_quaternion, quaternion_raw_multiply
 from utils.graphics_utils import fov2focal
 
@@ -277,7 +277,11 @@ class UNetBlock(torch.nn.Module):
 class CLOOBHandler(nn.Module):
     def __init__(self, device="cuda"):
         super(CLOOBHandler, self).__init__()
-        self.cloob_model, self.preprocess = clip.load("ViT-B/32", device=device)
+        config = pretrained.get_config('cloob_laion_400m_vit_b_16_16_epochs')
+        self.cloob_model = model_pt.get_pt_model(config, device=device)
+        checkpoint = pretrained.download_checkpoint(config)
+        self.cloob_model.load_state_dict(model_pt.get_pt_params(config, checkpoint))
+        self.cloob_model.eval().requires_grad_(False).to(device)
         self.device = device
         self.cloob_model.eval()
 
@@ -292,27 +296,17 @@ class CLOOBHandler(nn.Module):
         Returns:
             torch.Tensor: CLOOB embeddings of shape [B, 512].
         """
-        input_images = input_images.mean(dim=2)  # Shape: [B, 1, H, W]
 
-        # Step 2: Convert grayscale to RGB
-        rgb_image = input_images.repeat(1, 3, 1, 1)  # Shape: [B, 3, H, W]
-
-        # Step 3: Convert to range [0, 1]
-        rgb_image = (rgb_image - rgb_image.min()) / (rgb_image.max() - rgb_image.min() + 1e-5)
-
-        # Step 4: Apply CLOOB preprocessing pipeline
+        # Apply CLOOB preprocessing pipeline
         preprocess_transform = T.Compose([
             T.Resize((224, 224)),
             T.Normalize(mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711]),
         ])
-        rgb_image = preprocess_transform(rgb_image)  # Shape: [B, 3, 224, 224]
+        input_images = preprocess_transform(input_images)  # Shape: [B, 3, 224, 224]
 
-        # Step 5: Move to GPU
-        rgb_image = rgb_image.to("cuda")
-
-        # Step 6: Compute embeddings
+        # Compute embeddings
         with torch.no_grad():
-            cloob_embeddings = self.cloob_model.encode_image(rgb_image)  # Shape: [B, 512]
+            cloob_embeddings = self.cloob_model.encode_image(input_images)  # Shape: [B, 512]
 
         return cloob_embeddings
 
@@ -545,7 +539,7 @@ class GaussianSplatPredictor(nn.Module):
     def __init__(self, cfg):
         super(GaussianSplatPredictor, self).__init__()
         self.cfg = cfg
-        self.pretr_model = CLOOBHandler()
+        self.cloob_model = CLOOBHandler()
         assert cfg.model.network_with_offset or cfg.model.network_without_offset, \
             "Need at least one network"
 
