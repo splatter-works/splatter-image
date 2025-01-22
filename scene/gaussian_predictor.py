@@ -520,9 +520,9 @@ class SingleImageSongUNetPredictor(nn.Module):
                 self.out.bias[start_channels:start_channels+out_channel], b)
             start_channels += out_channel
 
-    def forward(self, x, cloob_features=None, film_camera_emb=None, N_views_xa=1):
+    def forward(self, x, cloob_embeddings=None, film_camera_emb=None, N_views_xa=1):
         x = self.encoder(x,
-                         cloob_features=cloob_features,
+                         cloob_embeddings=cloob_embeddings,
                          film_camera_emb=film_camera_emb,
                          N_views_xa=N_views_xa)
 
