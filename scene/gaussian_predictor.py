@@ -297,6 +297,9 @@ class CLOOBHandler(nn.Module):
             torch.Tensor: CLOOB embeddings of shape [B, 512].
         """
 
+        # Remove depth dimension
+        input_images = input_images[:, :, :3, ...].squeeze(1)
+
         # Apply CLOOB preprocessing pipeline
         preprocess_transform = T.Compose([
             T.Resize((224, 224)),
@@ -460,10 +463,6 @@ class SongUNet(nn.Module):
         # Step 4: Fuse with x
         x = torch.cat([x, pretr_features], dim=1) 
         x = self.channel_reducer(x)  # Shape: [1, 256, 16, 16]
-
-
-        # print("concatination worked")
-        print(x.shape)
 
         # Decoder.
         aux = None
@@ -750,10 +749,7 @@ class GaussianSplatPredictor(nn.Module):
                 focals_pixels=None,
                 activate_output=True):
         
-        print("I'M IN THE FORWARD FUNCTION", x)
-        print("shape", x.shape)
         cloob_embeddings = self.cloob_model(x)
-        print("CLOOB SHAPE : ", cloob_embeddings.shape)
 
         B = x.shape[0]
         N_views = x.shape[1]
