@@ -309,7 +309,7 @@ class CLOOBHandler(nn.Module):
 
         # Compute embeddings
         with torch.no_grad():
-            cloob_embeddings = self.cloob_model.encode_image(input_images)  # Shape: [B, 512]
+            cloob_embeddings = self.cloob_model.image_encoder(input_images)  # Shape: [B, 512]
 
         return cloob_embeddings
 
