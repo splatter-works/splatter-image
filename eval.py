@@ -18,6 +18,9 @@ from gaussian_renderer import render_predicted
 from scene.gaussian_predictor import GaussianSplatPredictor
 from datasets.dataset_factory import get_dataset
 from utils.loss_utils import ssim as ssim_fn
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class Metricator():
     def __init__(self, device):

@@ -2,3 +2,7 @@ __pycache__
 */__pycache__
 experiments_out
 configs/hydra/cluster.yaml
+.env
+scores.txt
+teddybears_test_scores.json
+hydrants_test_scores.json

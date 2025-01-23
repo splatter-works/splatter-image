@@ -87,6 +87,13 @@ Pretrained models for all datasets are now available via [Huggingface Models](ht
 
 You can also download them manually if you wish to do so, by manually clicking the download button on the [Huggingface model files page](https://huggingface.co/szymanowiczs/splatter-image-v1). Download the config file with it and see `eval.py` for how the model is loaded.
 
+## Config
+
+When training on evaluating on either `hydrants` or `teddybears` from CO3D dataset, please update you `.env` file such that it sets the path to the root of directory which stores the data. For example a `.env` file might look like:
+```
+CO3D_DATASET_ROOT='/cluster/54/aderylo/workspace/co3d/PREPROCESSED_FOLDER'
+```
+Previously this was set in the code which made it problematic when pushing code to the common repo. 
 
 ## Evaluation
 
