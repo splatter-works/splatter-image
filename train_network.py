@@ -85,7 +85,7 @@ def main(cfg: DictConfig):
             print('Loaded model')
         # Resuming from checkpoint
         elif cfg.opt.pretrained_ckpt is not None:
-            pretrained_ckpt_dir = os.path.join(cfg.opt.pretrained_ckpt, "model_latest.pth")
+            pretrained_ckpt_dir = os.path.join(cfg.opt.pretrained_ckpt, "model_best.pth") # changed from latest to best
             checkpoint = torch.load(pretrained_ckpt_dir,
                                     map_location=device) 
             try:
