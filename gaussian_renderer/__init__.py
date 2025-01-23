@@ -50,8 +50,7 @@ def render_predicted(pc : dict,
         sh_degree=cfg.model.max_sh_degree,
         campos=camera_center,
         prefiltered=False,
-        debug=False,
-        antialiasing=True
+        debug=False
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
@@ -82,7 +81,7 @@ def render_predicted(pc : dict,
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii, _ = rasterizer(
+    rendered_image, radii = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
