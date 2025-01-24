@@ -127,26 +127,22 @@ def main(cfg: DictConfig):
         persistent_workers = False
 
     dataset = get_dataset(cfg, "train")
-    total_samples = len(dataset)
-    num_samples_first_half = total_samples // 100
-    indices = list(range(num_samples_first_half))
-    subset_dataset = Subset(dataset, indices)
-    dataloader = DataLoader(subset_dataset, 
+    dataloader = DataLoader(dataset, 
                             batch_size=cfg.opt.batch_size,
                             shuffle=True,
                             num_workers=num_workers,
                             persistent_workers=persistent_workers)
 
-    # val_dataset = get_dataset(cfg, "val")
-    val_dataloader = DataLoader(subset_dataset, 
+    val_dataset = get_dataset(cfg, "val")
+    val_dataloader = DataLoader(val_dataset, 
                                 batch_size=1,
                                 shuffle=False,
                                 num_workers=1,
                                 persistent_workers=True,
                                 pin_memory=True)
 
-    # test_dataset = get_dataset(cfg, "vis")
-    test_dataloader = DataLoader(subset_dataset, 
+    test_dataset = get_dataset(cfg, "vis")
+    test_dataloader = DataLoader(test_dataset, 
                                  batch_size=1,
                                  shuffle=True)
     
