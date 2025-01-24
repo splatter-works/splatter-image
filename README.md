@@ -20,26 +20,19 @@ python gradio_app.py
 
 # Installation
 
-1. Create a conda environment: 
+1. Assuming you have CUDA/11.6 installed, create a conda environment: 
 ```
-conda create --name splatter-image
-conda activate splatter-image
+conda env create -f env.yaml -n splatter-image
+conda activate splatter-image 
 ```
+If that is not the case (TUM Cluster) use `env+cu116.yaml` so CUDA will be installed inside of the conda environment. The downside of this is that env initialization takes considerably longer. 
 
-Install Pytorch following [official instructions](https://pytorch.org). Pytorch / Python / Pytorch3D combination that was verified to work is:
-- Python 3.8, Pytorch 1.13.0, CUDA 11.6, Pytorch3D 0.7.2
-Alternatively, you can create a separate environment with Pytorch3D 0.7.2, which you use just for CO3D data preprocessing. Then, once CO3D had been preprocessed, you can use these combinations of Python / Pytorch too. 
-- Python 3.7, Pytorch 1.12.1, CUDA 11.6
-- Python 3.8, Pytorch 2.1.1, CUDA 12.1
-
-Install other requirements:
+2. Install Gaussian Splatting renderer:
 ```
-pip install -r requirements.txt
+git clone git@github.com:graphdeco-inria/diff-gaussian-rasterization.git
+pip install diff-gaussian-rasterization 
 ```
-
-2. Install Gaussian Splatting renderer, i.e. the library for rendering a Gaussian Point cloud to an image. To do so, pull the [Gaussian Splatting repository](https://github.com/graphdeco-inria/gaussian-splatting/tree/main) and, with your conda environment activated, run `pip install submodules/diff-gaussian-rasterization`. You will need to meet the [hardware and software requirements](https://github.com/graphdeco-inria/gaussian-splatting/blob/main/README.md#hardware-requirements). We did all our experimentation on an NVIDIA A6000 GPU and speed measurements on an NVIDIA V100 GPU. 
-
-3. If you want to train on CO3D data you will need to install Pytorch3D 0.7.2. See instructions [here](https://github.com/facebookresearch/pytorch3d/blob/main/INSTALL.md). It is recommended to install with pip from a pre-built binary. Find a compatible binary [here](https://anaconda.org/pytorch3d/pytorch3d/files?page=5) and install it with `pip`. For example, with Python 3.8, Pytorch 1.13.0, CUDA 11.6 run
+3. If you want to train on CO3D data you will need to install Pytorch3D 0.7.2. (This is only needed for preprocessing of data.) See instructions [here](https://github.com/facebookresearch/pytorch3d/blob/main/INSTALL.md). It is recommended to install with pip from a pre-built binary. Find a compatible binary [here](https://anaconda.org/pytorch3d/pytorch3d/files?page=5) and install it with `pip`. For example, with Python 3.8, Pytorch 1.13.0, CUDA 11.6 run
 `pip install --no-index --no-cache-dir pytorch3d -f https://anaconda.org/pytorch3d/pytorch3d/0.7.2/download/linux-64/pytorch3d-0.7.2-py38_cu116_pyt1130.tar.bz2`.
 
 # Data
@@ -94,6 +87,13 @@ Pretrained models for all datasets are now available via [Huggingface Models](ht
 
 You can also download them manually if you wish to do so, by manually clicking the download button on the [Huggingface model files page](https://huggingface.co/szymanowiczs/splatter-image-v1). Download the config file with it and see `eval.py` for how the model is loaded.
 
+## Config
+
+When training on evaluating on either `hydrants` or `teddybears` from CO3D dataset, please update you `.env` file such that it sets the path to the root of directory which stores the data. For example a `.env` file might look like:
+```
+CO3D_DATASET_ROOT='/cluster/54/aderylo/workspace/co3d/PREPROCESSED_FOLDER'
+```
+Previously this was set in the code which made it problematic when pushing code to the common repo. 
 
 ## Evaluation
 
@@ -148,6 +148,12 @@ To train a 2-view model run:
 ```
 python train_network.py +dataset=cars cam_embd=pose_pos data.input_images=2 opt.imgs_per_obj=5
 ```
+
+Before scheduling a longer training job, it is useful to perform a sanity check to ensure that the model can at least overfit on a single object. To verify this, run the following command on a hydrant dataset as an example:
+```
+python train_network.py +dataset=hydrants +experiment=overfit.yaml
+```
+This process takes approximately 8 minutes to complete. However, halfway through, the PSNR score exceeds 22.25 reaching a level that the original model achieves after a week of training on the entire dataset.
 
 ## Code structure
 

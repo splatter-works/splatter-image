@@ -20,7 +20,9 @@ from eval import evaluate_dataset
 from gaussian_renderer import render_predicted
 from scene.gaussian_predictor import GaussianSplatPredictor
 from datasets.dataset_factory import get_dataset
+from dotenv import load_dotenv 
 
+load_dotenv()
 
 @hydra.main(version_base=None, config_path='configs', config_name="default_config")
 def main(cfg: DictConfig):
@@ -126,14 +128,21 @@ def main(cfg: DictConfig):
         num_workers = 0
         persistent_workers = False
 
-    dataset = get_dataset(cfg, "train")
+    if cfg.opt.overfit:
+        dataset = get_dataset(cfg, "val")
+        val_dataset = dataset
+        test_dataset = dataset 
+    else:
+        dataset = get_dataset(cfg, "test")
+        val_dataset = get_dataset(cfg, "val")
+        test_dataset = get_dataset(cfg, "vis")
+
     dataloader = DataLoader(dataset, 
                             batch_size=cfg.opt.batch_size,
                             shuffle=True,
                             num_workers=num_workers,
                             persistent_workers=persistent_workers)
 
-    val_dataset = get_dataset(cfg, "val")
     val_dataloader = DataLoader(val_dataset, 
                                 batch_size=1,
                                 shuffle=False,
@@ -141,7 +150,6 @@ def main(cfg: DictConfig):
                                 persistent_workers=True,
                                 pin_memory=True)
 
-    test_dataset = get_dataset(cfg, "vis")
     test_dataloader = DataLoader(test_dataset, 
                                  batch_size=1,
                                  shuffle=True)
