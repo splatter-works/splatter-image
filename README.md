@@ -22,10 +22,10 @@ python gradio_app.py
 
 1. Assuming you have CUDA/11.6 installed, create a conda environment: 
 ```
-conda env create -f env.yml -n splatter-image
+conda env create -f env.yaml -n splatter-image
 conda activate splatter-image 
 ```
-If that is not the case (TUM Cluster) use `env+cu116.yml` so CUDA will be installed inside of the conda environment. The downside of this is that env initialization takes considerably longer. 
+If that is not the case (TUM Cluster) use `env+cu116.yaml` so CUDA will be installed inside of the conda environment. The downside of this is that env initialization takes considerably longer. 
 
 2. Install Gaussian Splatting renderer:
 ```
