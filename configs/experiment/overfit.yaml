@@ -1,0 +1,12 @@
+# @package _global_
+data:
+  subset: 1
+opt:
+  iterations: 1001
+  batch_size: 1
+logging:
+  ckpt_iterations: 10000
+  val_log: 200
+  loss_log: 20
+  loop_log: 200
+  render_log: 1000
