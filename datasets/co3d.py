@@ -8,14 +8,14 @@ import torch
 
 
 from .bad_sequences import (
-    NAN_SEQUENCES, 
-    NO_FG_COND_FRAME_SEQ, 
+    NAN_SEQUENCES,
+    NO_FG_COND_FRAME_SEQ,
     LARGE_FOCAL_FRAME_SEQ,
     EXCLUDE_SEQUENCE,
     CAMERAS_CLOSE_SEQUENCE,
     CAMERAS_FAR_AWAY_SEQUENCE,
     LOW_QUALITY_SEQUENCE
-    )
+)
 
 from .shared_dataset import SharedDataset
 
@@ -23,8 +23,9 @@ from .dataset_readers import readCamerasFromNpy
 from utils.general_utils import matrix_to_quaternion
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix, getView2World, fov2focal
 
-CO3D_DATASET_ROOT = None # Change this to where you saved preprocessed data
+CO3D_DATASET_ROOT = "/net/tscratch/people/plgaderylo/malgorz/data"  # Change this to where you saved preprocessed data
 assert CO3D_DATASET_ROOT is not None, "Update the location of the CO3D Dataset"
+
 
 class CO3DDataset(SharedDataset):
     def __init__(self, cfg,
@@ -36,9 +37,9 @@ class CO3DDataset(SharedDataset):
             self.dataset_name = "test"
 
         # assumes cfg.data.category ends with an "s", for example hydrantS, which
-        # is not included in the dataset name 
-        self.base_path = os.path.join(CO3D_DATASET_ROOT, 
-                                      "co3d_{}_for_gs".format(cfg.data.category[:-1]), 
+        # is not included in the dataset name
+        self.base_path = os.path.join(CO3D_DATASET_ROOT,
+                                      "co3d_{}_for_gs".format(cfg.data.category[:-1]),
                                       self.dataset_name)
 
         frame_order_files = sorted(
@@ -84,7 +85,7 @@ class CO3DDataset(SharedDataset):
         """
         Initialises an image of ray directions, unscaled by focal lengths.
         """
-        x = torch.linspace(-63.5, 63.5, 128) 
+        x = torch.linspace(-63.5, 63.5, 128)
         y = torch.linspace(63.5, -63.5, 128)
         if self.cfg.model.inverted_x:
             x = -x
@@ -96,13 +97,13 @@ class CO3DDataset(SharedDataset):
         self.ray_dirs = ray_dirs
 
     def get_origin_distance(self, camera_to_world):
-        # outputs the origin_distances. This helps resolve depth 
+        # outputs the origin_distances. This helps resolve depth
         # ambiguity in single-view depth estimation. Follows PixelNeRF
         camera_center_to_origin = - camera_to_world[3, :3]
         camera_z_vector = camera_to_world[2, :3]
         origin_distances = torch.dot(camera_center_to_origin, camera_z_vector).unsqueeze(0)
-        origin_distances = repeat(origin_distances, 'c -> c h w', 
-                                h=self.cfg.data.training_resolution, w=self.cfg.data.training_resolution)
+        origin_distances = repeat(origin_distances, 'c -> c h w',
+                                  h=self.cfg.data.training_resolution, w=self.cfg.data.training_resolution)
 
         return origin_distances
 
@@ -111,7 +112,7 @@ class CO3DDataset(SharedDataset):
         self.Rs = np.load(os.path.join(self.base_path, "camera_Rs.npz"))
 
     def load_example_id(self, example_id, intrin_path,
-                        trans = np.array([0.0, 0.0, 0.0]), scale=1.0):
+                        trans=np.array([0.0, 0.0, 0.0]), scale=1.0):
         """
         Reads an example from storage if it has not been read already.
         """
@@ -152,8 +153,8 @@ class CO3DDataset(SharedDataset):
             w2c_Rs_rmo = self.Rs[example_id]
 
             # Read cameras, convert into our camera convention and compute full projection matrices
-            cam_infos = readCamerasFromNpy(dir_path, 
-                                           w2c_Rs_rmo=w2c_Rs_rmo, 
+            cam_infos = readCamerasFromNpy(dir_path,
+                                           w2c_Rs_rmo=w2c_Rs_rmo,
                                            w2c_Ts_rmo=w2c_Ts_rmo,
                                            focals_folder_path=focals_folder_path)
 
@@ -165,10 +166,10 @@ class CO3DDataset(SharedDataset):
                 view_world_transform = torch.tensor(getView2World(R, T, trans, scale)).transpose(0, 1)
 
                 projection_matrix = getProjectionMatrix(
-                        znear=self.cfg.data.znear, zfar=self.cfg.data.zfar,
-                        fovX=cam_info.FovX, 
-                        fovY=cam_info.FovY
-                    ).transpose(0,1)
+                    znear=self.cfg.data.znear, zfar=self.cfg.data.zfar,
+                    fovX=cam_info.FovX,
+                    fovY=cam_info.FovY
+                ).transpose(0, 1)
 
                 full_proj_transform = (world_view_transform.unsqueeze(0).bmm(projection_matrix.unsqueeze(0))).squeeze(0)
                 camera_center = world_view_transform.inverse()[3, :3]
@@ -195,7 +196,6 @@ class CO3DDataset(SharedDataset):
             self.all_origin_distances[example_id] = torch.stack(self.all_origin_distances[example_id])
             self.all_ray_embeddings[example_id] = torch.stack(self.all_ray_embeddings[example_id])
 
-
     def get_example_id(self, index):
         intrin_path = self.frame_order_files[index]
         example_id = os.path.basename(os.path.dirname(intrin_path))
@@ -204,17 +204,17 @@ class CO3DDataset(SharedDataset):
     def __getitem__(self, index):
         intrin_path = self.frame_order_files[index]
         example_id = os.path.basename(os.path.dirname(intrin_path))
-         
+
         self.load_example_id(example_id, intrin_path)
         if self.dataset_name == "train":
             frame_idxs = torch.randperm(
-                    len(self.all_rgbs[example_id])
-                    )[:self.imgs_per_obj]
+                len(self.all_rgbs[example_id])
+            )[:self.imgs_per_obj]
             frame_idxs = torch.cat([frame_idxs[:self.cfg.data.input_images], frame_idxs], dim=0)
         else:
             input_idxs = self.test_input_idxs
-            frame_idxs = torch.cat([torch.tensor(input_idxs), 
-                                    torch.tensor([i for i in range(len(self.all_rgbs[example_id])) if i not in input_idxs])], dim=0) 
+            frame_idxs = torch.cat([torch.tensor(input_idxs),
+                                    torch.tensor([i for i in range(len(self.all_rgbs[example_id])) if i not in input_idxs])], dim=0)
 
         images_and_camera_poses = {
             "gt_images": self.all_rgbs[example_id][frame_idxs].clone(),
@@ -229,7 +229,8 @@ class CO3DDataset(SharedDataset):
 
         images_and_camera_poses = self.make_poses_relative_to_first(images_and_camera_poses)
 
-        images_and_camera_poses["source_cv2wT_quat"] = self.get_source_cw2wT(images_and_camera_poses["view_to_world_transforms"])
+        images_and_camera_poses["source_cv2wT_quat"] = self.get_source_cw2wT(
+            images_and_camera_poses["view_to_world_transforms"])
 
         # Check that data does not have NaN values
         for k, v in images_and_camera_poses.items():

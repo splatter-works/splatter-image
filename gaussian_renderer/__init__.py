@@ -8,23 +8,25 @@ import numpy as np
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from utils.graphics_utils import focal2fov
 
-def render_predicted(pc : dict, 
+
+def render_predicted(pc: dict,
                      world_view_transform,
                      full_proj_transform,
                      camera_center,
-                     bg_color : torch.Tensor, 
-                     cfg, 
-                     scaling_modifier = 1.0, 
-                     override_color = None,
-                     focals_pixels = None):
+                     bg_color: torch.Tensor,
+                     cfg,
+                     scaling_modifier=1.0,
+                     override_color=None,
+                     focals_pixels=None):
     """
     Render the scene as specified by pc dictionary. 
-    
+
     Background tensor (bg_color) must be on GPU!
     """
- 
+
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
-    screenspace_points = torch.zeros_like(pc["xyz"], dtype=pc["xyz"].dtype, requires_grad=True, device=pc["xyz"].device) + 0
+    screenspace_points = torch.zeros_like(pc["xyz"], dtype=pc["xyz"].dtype,
+                                          requires_grad=True, device=pc["xyz"].device) + 0
     try:
         screenspace_points.retain_grad()
     except:
@@ -50,6 +52,7 @@ def render_predicted(pc : dict,
         sh_degree=cfg.model.max_sh_degree,
         campos=camera_center,
         prefiltered=False,
+        antialiasing=False,
         debug=False
     )
 
@@ -80,20 +83,20 @@ def render_predicted(pc : dict,
     else:
         colors_precomp = override_color
 
-    # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii = rasterizer(
-        means3D = means3D,
-        means2D = means2D,
-        shs = shs,
-        colors_precomp = colors_precomp,
-        opacities = opacity,
-        scales = scales,
-        rotations = rotations,
-        cov3D_precomp = cov3D_precomp)
+    # Rasterize visible Gaussians to image, obtain their radii (on screen).
+    rendered_image, radii, _ = rasterizer(
+        means3D=means3D,
+        means2D=means2D,
+        shs=shs,
+        colors_precomp=colors_precomp,
+        opacities=opacity,
+        scales=scales,
+        rotations=rotations,
+        cov3D_precomp=cov3D_precomp)
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {"render": rendered_image,
             "viewspace_points": screenspace_points,
-            "visibility_filter" : radii > 0,
+            "visibility_filter": radii > 0,
             "radii": radii}
