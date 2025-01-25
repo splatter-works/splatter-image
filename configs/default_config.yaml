@@ -31,6 +31,9 @@ opt:
   lambda_lpips: 0.0
   pretrained_ckpt: null
   overfit: false
+  depth_predictor: 
+    use: true
+    type: MiDaS_small # DPT_Large, DPT_Hybrid, MiDaS_small
 
 model:
   max_sh_degree: 1

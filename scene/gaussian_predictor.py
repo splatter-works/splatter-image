@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torchvision 
+import timm
 
 import numpy as np
 import torch
@@ -433,11 +434,13 @@ class SingleImageSongUNetPredictor(nn.Module):
         super(SingleImageSongUNetPredictor, self).__init__()
         self.out_channels = out_channels
         self.cfg = cfg
+        additional_chanels = 1 if cfg.opt.depth_predictor.use else 0
+
         if cfg.cam_embd.embedding is None:
-            in_channels = 3
+            in_channels = 3 + additional_chanels
             emb_dim_in = 0
         else:
-            in_channels = 3
+            in_channels = 3 + additional_chanels
             emb_dim_in = 6 * cfg.cam_embd.dimension
 
         self.encoder = SongUNet(cfg.data.training_resolution, 
@@ -474,12 +477,40 @@ def networkCallBack(cfg, name, out_channels, **kwargs):
     else:
         raise NotImplementedError
 
+class DepthPredictor(nn.Module):
+    def __init__(self, cfg):
+        super(DepthPredictor, self).__init__()
+        model_type = cfg.opt.depth_predictor.type
+        assert model_type in ['DPT_Large', 'DPT_Hybrid', 'MiDaS_small'], \
+            "See supported depth models at https://pytorch.org/hub/intelisl_midas_v2/"
+        self.model = torch.hub.load("intel-isl/MiDaS", model_type) 
+        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        self.model.to(device)
+        self.model.eval()
+
+        midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms")
+
+    def forward(self, input_images):         
+        # remove depth/constant_offset dimension
+        input_images = input_images[:, :3, ...]
+
+        with torch.no_grad():
+            depth_map = self.model(input_images)
+
+        return depth_map
+
 class GaussianSplatPredictor(nn.Module):
     def __init__(self, cfg):
         super(GaussianSplatPredictor, self).__init__()
         self.cfg = cfg
         assert cfg.model.network_with_offset or cfg.model.network_without_offset, \
             "Need at least one network"
+
+        if cfg.opt.depth_predictor.use:
+            self.depth_predictor = DepthPredictor(cfg)
+            self.depth_predictor.eval()
+            for param in self.depth_predictor.parameters():
+                param.requires_grad = False
 
         if cfg.model.network_with_offset:
             split_dimensions, scale_inits, bias_inits = self.get_splits_and_inits(True, cfg)
@@ -715,6 +746,11 @@ class GaussianSplatPredictor(nn.Module):
             x = x[:, :3, ...]
         else:
             const_offset = None
+
+        if self.cfg.opt.depth_predictor.use:
+            depth_maps = self.depth_predictor(x[:, :3, ...])
+            depth_maps = depth_maps.unsqueeze(1)
+            x = torch.cat((x, depth_maps), dim=1)
 
         source_cameras_view_to_world = source_cameras_view_to_world.reshape(B*N_views, *source_cameras_view_to_world.shape[2:])
         x = x.contiguous(memory_format=torch.channels_last)
