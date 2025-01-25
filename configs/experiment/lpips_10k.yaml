@@ -1,0 +1,6 @@
+# @package _global_
+opt:
+  iterations: 10001
+  pretrained_ckpt: /cluster/54/mgwiazda/splatter-image/experiments_out/2025-01-23/17-36-51
+  lambda_lpips: 0.01
+  base_lr: 0.000005
