@@ -1,0 +1,2 @@
+loss:
+  - lambda_var: 0.01

@@ -22,6 +22,34 @@ from scene.gaussian_predictor import GaussianSplatPredictor
 from datasets.dataset_factory import get_dataset
 
 
+def edge_loss(pred, target):
+    """
+    Compute the edge loss using Sobel filters.
+    Args:
+        pred (torch.Tensor): Predicted images (B, C, H, W).
+        target (torch.Tensor): Ground truth images (B, C, H, W).
+    Returns:
+        torch.Tensor: Edge loss.
+    """
+    sobel_x = torch.tensor([[1, 0, -1], [2, 0, -2], [1, 0, -1]],
+                           dtype=torch.float32, device=pred.device).view(1, 1, 3, 3)
+    sobel_y = torch.tensor([[1, 2, 1], [0, 0, 0], [-1, -2, -1]],
+                           dtype=torch.float32, device=pred.device).view(1, 1, 3, 3)
+
+    def compute_edges(image):
+        # Apply Sobel filters separately to each channel
+        grad_x = torch.nn.functional.conv2d(image, sobel_x.expand(image.size(1), -1, -1, -1),
+                                            groups=image.size(1), padding=1)
+        grad_y = torch.nn.functional.conv2d(image, sobel_y.expand(image.size(1), -1, -1, -1),
+                                            groups=image.size(1), padding=1)
+        edges = torch.sqrt(grad_x**2 + grad_y**2)
+        return edges
+
+    pred_edges = compute_edges(pred)
+    target_edges = compute_edges(target)
+    return torch.mean((pred_edges - target_edges) ** 2)
+
+
 def total_variation_loss(image):
     """
     Compute the total variation loss for an image.
@@ -128,8 +156,10 @@ def main(cfg: DictConfig):
     lambda_lpips = cfg.opt.lambda_lpips
     lambda_l12 = 1.0 - lambda_lpips
 
-    lambda_tv = cfg.opt.lambda_var
-    print("lambda_tv", lambda_tv)
+    lambda_var = cfg.loss.lambda_var
+    print("lambda_var", lambda_var)
+    lambda_edge = cfg.loss.lambda_edge
+    print("lambda_edge", lambda_edge)
 
     bg_color = [1, 1, 1] if cfg.data.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32)
@@ -217,9 +247,11 @@ def main(cfg: DictConfig):
                 else:
                     small_gaussian_reg_loss = 0.0
             # Render
+            total_loss = 0.0
             l12_loss_sum = 0.0
             lpips_loss_sum = 0.0
-            tv_loss_sum = 0.0
+            var_loss_sum = 0.0
+            edge_loss_sum = 0.0
             rendered_images = []
             gt_images = []
             for b_idx in range(data["gt_images"].shape[0]):
@@ -252,14 +284,23 @@ def main(cfg: DictConfig):
                     lpips_fn(rendered_images * 2 - 1, gt_images * 2 - 1),
                 )
 
-            tv_loss_sum = total_variation_loss(rendered_images)
-            print("rendered_images.shape", rendered_images.shape)
-            print("l12_loss_sum", l12_loss_sum)
-            print("tv_loss_sum", tv_loss_sum)
-            total_loss = l12_loss_sum * lambda_l12 + lpips_loss_sum * lambda_lpips + tv_loss_sum * lambda_tv
+            if cfg.loss.lambda_var != 0:
+                var_loss_sum = total_variation_loss(rendered_images)
+                total_loss += var_loss_sum * lambda_var
+            if cfg.loss.lambda_edge != 0:
+                edge_loss_sum = edge_loss(rendered_images, gt_images)
+                total_loss += edge_loss_sum * lambda_edge
+
+            if iteration % 20 == 1:
+                print("l12_loss_sum", l12_loss_sum)
+                print("lpips_loss_sum", lpips_loss_sum)
+                print("var_loss_sum", var_loss_sum)
+                print("edge_loss_sum", edge_loss_sum)
+
+            total_loss += l12_loss_sum * lambda_l12 + lpips_loss_sum * lambda_lpips
 
             if cfg.data.category == "hydrants" or cfg.data.category == "teddybears":
-                total_loss = total_loss + big_gaussian_reg_loss + small_gaussian_reg_loss
+                total_loss += big_gaussian_reg_loss + small_gaussian_reg_loss
 
             assert not total_loss.isnan(), "Found NaN loss!"
             print("finished forward {} on process {}".format(iteration, fabric.global_rank))

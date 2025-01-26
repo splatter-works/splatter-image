@@ -1,0 +1,2 @@
+loss:
+  - lambda_edge: 0.1
