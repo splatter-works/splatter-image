@@ -149,6 +149,12 @@ To train a 2-view model run:
 python train_network.py +dataset=cars cam_embd=pose_pos data.input_images=2 opt.imgs_per_obj=5
 ```
 
+Before scheduling a longer training job, it is useful to perform a sanity check to ensure that the model can at least overfit on a single object. To verify this, run the following command on a hydrant dataset as an example:
+```
+python train_network.py +dataset=hydrants +experiment=overfit.yaml
+```
+This process takes approximately 8 minutes to complete. However, halfway through, the PSNR score exceeds 22.25 reaching a level that the original model achieves after a week of training on the entire dataset.
+
 ## Code structure
 
 Training loop is implemented in `train_network.py` and evaluation code is in `eval.py`. Datasets are implemented in `datasets/srn.py` and `datasets/co3d.py`. Model is implemented in `scene/gaussian_predictor.py`. The call to renderer can be found in `gaussian_renderer/__init__.py`.

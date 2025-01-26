@@ -1,0 +1,12 @@
+# @package _global_
+data:
+  subset: 1
+opt:
+  iterations: 1001
+  overfit: true
+logging:
+  ckpt_iterations: 10000
+  val_log: 100
+  loss_log: 10
+  loop_log: 100
+  render_log: 100
