@@ -1,3 +1,4 @@
 # @package _global_
 opt:
-  - lambda_var: 0.1
+  lambda_var: 0.1
+  lambda_edge: 0.0
