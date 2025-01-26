@@ -15,7 +15,7 @@ data:
   input_images: 1
   origin_distances: false
 opt:
-  iterations: 800001
+  iterations: 25001
   base_lr: 0.00005
   batch_size: 8
   betas:
@@ -24,7 +24,7 @@ opt:
   loss: l2
   imgs_per_obj: 4
   ema: 
-    use: true
+    use: false
     update_every: 10
     update_after_step: 100
     beta: 0.9999
@@ -33,7 +33,7 @@ opt:
   overfit: false
   depth_predictor: 
     use: true
-    type: MiDaS_small # DPT_Large, DPT_Hybrid, MiDaS_small
+    type: DPT_Large # DPT_Large, DPT_Hybrid, MiDaS_small
 
 model:
   max_sh_degree: 1
