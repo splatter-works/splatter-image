@@ -2,3 +2,8 @@ __pycache__
 */__pycache__
 experiments_out
 configs/hydra/cluster.yaml
+.env
+
+# Don't save the results
+scores.txt
+*_test_scores.json

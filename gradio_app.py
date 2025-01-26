@@ -27,12 +27,14 @@ import rembg
 
 from huggingface_hub import hf_hub_download
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 @torch.no_grad()
 def main():
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-    device = torch.device("cuda:0")
-    torch.cuda.set_device(device)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model_cfg = OmegaConf.load(
         os.path.join(
@@ -224,7 +226,7 @@ def main():
         )
 
     demo.queue(max_size=1)
-    demo.launch()
+    demo.launch(share=True)
 
 if __name__ == "__main__":
     main()

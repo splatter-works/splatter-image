@@ -19,6 +19,10 @@ from scene.gaussian_predictor import GaussianSplatPredictor
 from datasets.dataset_factory import get_dataset
 from utils.loss_utils import ssim as ssim_fn
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 class Metricator():
     def __init__(self, device):
         self.lpips_net = lpips_lib.LPIPS(net='vgg').to(device)
