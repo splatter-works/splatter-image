@@ -156,9 +156,9 @@ def main(cfg: DictConfig):
     lambda_lpips = cfg.opt.lambda_lpips
     lambda_l12 = 1.0 - lambda_lpips
 
-    lambda_var = cfg.loss.lambda_var
+    lambda_var = cfg.opt.lambda_var
     print("lambda_var", lambda_var)
-    lambda_edge = cfg.loss.lambda_edge
+    lambda_edge = cfg.opt.lambda_edge
     print("lambda_edge", lambda_edge)
 
     bg_color = [1, 1, 1] if cfg.data.white_background else [0, 0, 0]
@@ -284,10 +284,10 @@ def main(cfg: DictConfig):
                     lpips_fn(rendered_images * 2 - 1, gt_images * 2 - 1),
                 )
 
-            if cfg.loss.lambda_var != 0:
+            if cfg.opt.lambda_var != 0:
                 var_loss_sum = total_variation_loss(rendered_images)
                 total_loss += var_loss_sum * lambda_var
-            if cfg.loss.lambda_edge != 0:
+            if cfg.opt.lambda_edge != 0:
                 edge_loss_sum = edge_loss(rendered_images, gt_images)
                 total_loss += edge_loss_sum * lambda_edge
 

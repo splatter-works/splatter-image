@@ -1,2 +1,3 @@
-loss:
+# @package _global_
+opt:
   - lambda_var: 0.01
