@@ -96,7 +96,7 @@ def main(cfg: DictConfig):
                 gaussian_predictor.load_state_dict(checkpoint["model_state_dict"],
                                                 strict=False)
             best_PSNR = checkpoint["best_PSNR"] 
-            print('Loaded model from a pretrained checkpoint')
+            print(f'Loaded model from a pretrained checkpoint: {pretrained_ckpt_dir}')
         else:
             best_PSNR = 0.0
 
