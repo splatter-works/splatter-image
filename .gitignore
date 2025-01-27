@@ -7,3 +7,5 @@ configs/hydra/cluster.yaml
 # Don't save the results
 scores.txt
 *_test_scores.json
+
+runs/
