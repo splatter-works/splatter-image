@@ -15,7 +15,7 @@ data:
   input_images: 1
   origin_distances: false
 opt:
-  iterations: 40001
+  iterations: 25001
   base_lr: 0.00005
   batch_size: 4
   betas:
