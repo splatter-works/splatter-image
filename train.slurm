@@ -4,7 +4,7 @@
 #SBATCH --nodes=1                      # Number of nodes
 #SBATCH --ntasks-per-node=1            # Number of tasks per node
 #SBATCH --mem=64G                      # Memory allocation
-#SBATCH --gres=gpu:1		       # Number of GPUs  
+#SBATCH --gres=gpu:1		       # Number of GPUs
 #SBATCH --output=runs/output_%j.log    # Output
 #SBATCH --time=04:00:00                # Walltime
 
@@ -12,7 +12,7 @@
 module load CUDA/11.6.0 \
 	GCCcore/11.2.0 \
 	Ninja/1.10.2 \
-	Miniconda3/23.3.1-0  
+	Miniconda3/23.3.1-0
 
 # Activate the conda environment
 eval "$(conda shell.bash hook)"
@@ -24,4 +24,5 @@ cd "$GIT_ROOT"
 
 # Run the training script
 echo "Stage one training:\n"
-python train_network.py +dataset=hydrants 
+python train_network.py +dataset=hydrants +loss=var_m01
+
