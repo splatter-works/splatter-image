@@ -32,7 +32,7 @@ opt:
   pretrained_ckpt: null
   overfit: false
   depth_predictor: 
-    use: true
+    use: false
     type: DPT_Large # DPT_Large, DPT_Hybrid, MiDaS_small
 
 model:
@@ -56,6 +56,10 @@ model:
   cross_view_attention: true
   base_dim: 128
   isotropic: false
+  context:
+    use: true
+    cross_attention_resolutions: [16]
+    channels: 1
 
 logging:
   ckpt_iterations: 1000
