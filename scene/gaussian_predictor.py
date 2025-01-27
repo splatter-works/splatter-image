@@ -194,6 +194,76 @@ class CrossAttentionBlock(torch.nn.Module):
 
         return x
 
+class CrossAttention(torch.nn.Module):
+    """Cross attention block allowing different channel dimensions for query and key-value inputs.
+    
+    Implements cross attention mechanism where queries from one feature space attend to
+    key-value pairs from another feature space. Supports different channel dimensions
+    by projecting to a common attention space.
+
+    Args:
+        q_channels (int): Number of channels in query input
+        kv_channels (int): Number of channels in key-value input
+        num_heads (int, optional): Number of attention heads. Default: 1
+        eps (float, optional): Epsilon for normalization stability. Default: 1e-5
+
+    Shape:
+        - Query: `(B, q_channels, H, W)`
+        - Key-Value: `(B, kv_channels, H', W')`
+        - Output: `(B, q_channels, H, W)`
+        
+    where B is batch size, H, W are height and width of query features,
+    H', W' are height and width of key-value features.
+    """
+    def __init__(self, q_channels, kv_channels, num_heads=1, eps=1e-5):
+        super(CrossAttention, self).__init__()
+
+        self.num_heads = num_heads
+        init_attn = dict(init_mode='xavier_uniform', init_weight=np.sqrt(0.2))
+        init_zero = dict(init_mode='xavier_uniform', init_weight=1e-5)
+
+        # Normalize input features
+        self.q_norm = GroupNorm(num_channels=q_channels, eps=eps)
+        self.kv_norm = GroupNorm(num_channels=kv_channels, num_groups=kv_channels, min_channels_per_group=1, eps=eps)
+
+        attn_dim = q_channels
+        self.q_proj = Conv2d(in_channels=q_channels, out_channels=attn_dim, kernel=1, **init_attn)
+        self.kv_proj = Conv2d(in_channels=kv_channels, out_channels=attn_dim*2, kernel=1, **init_attn)
+        self.out_proj = Conv2d(in_channels=attn_dim, out_channels=q_channels, kernel=3, **init_zero)
+
+
+    def forward(self, q: torch.Tensor, kv: torch.Tensor) -> torch.Tensor:
+        """Forward pass for cross attention.
+
+        Args:
+            q (torch.Tensor): Query input tensor of shape (B, q_channels, H, W)
+            kv (torch.Tensor): Key-value input tensor of shape (B, kv_channels, H', W')
+
+        Returns:
+            torch.Tensor: Attended features of shape (B, q_channels, H, W)
+
+        Note:
+            H, W can be different from H', W'. The attention mechanism will handle
+            different spatial dimensions automatically.
+        """
+        q_proj = self.q_proj(self.q_norm(q)).reshape(
+            q.shape[0] * self.num_heads,  q.shape[1] // self.num_heads, -1)
+        
+        kv_proj = self.kv_proj(self.kv_norm(kv))  # [B,Context_C, H`, W`] -> [B, 2*attn_dim, H', W']
+        kv_proj = kv_proj.reshape(
+            kv.shape[0] * self.num_heads,                 # Batch * heads
+            kv_proj.shape[1] // (2*self.num_heads), # Channels per head
+            2,                                  # Split K and V
+            -1                                  # Flattened spatial dims
+        )
+        k_proj, v_proj = kv_proj.unbind(2)
+        
+        w = AttentionOp.apply(q_proj, k_proj)
+        a = torch.einsum('nqk,nck->ncq', w, v_proj)
+        x = self.out_proj(a.reshape(*q.shape)).add_(q)
+
+        return x
+
 #----------------------------------------------------------------------------
 # Unified U-Net block with optional up/downsampling and self-attention.
 # Represents the union of all features employed by the DDPM++, NCSN++, and
@@ -205,6 +275,7 @@ class UNetBlock(torch.nn.Module):
         num_heads=None, channels_per_head=64, dropout=0, skip_scale=1, eps=1e-5,
         resample_filter=[1,1], resample_proj=False, adaptive_scale=True,
         init=dict(), init_zero=dict(init_weight=0), init_attn=None,
+        condition_via_cross_attn=False, context_channels=1,
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -212,6 +283,7 @@ class UNetBlock(torch.nn.Module):
         if emb_channels is not None:
             self.affine = Linear(in_features=emb_channels, out_features=out_channels*(2 if adaptive_scale else 1), **init)
         self.num_heads = 0 if not attention else num_heads if num_heads is not None else out_channels // channels_per_head
+        self.num_cross_attn_heads =  0 if not condition_via_cross_attn else num_heads if num_heads is not None else out_channels // channels_per_head
         self.dropout = dropout
         self.skip_scale = skip_scale
         self.adaptive_scale = adaptive_scale
@@ -231,7 +303,10 @@ class UNetBlock(torch.nn.Module):
             self.qkv = Conv2d(in_channels=out_channels, out_channels=out_channels*3, kernel=1, **(init_attn if init_attn is not None else init))
             self.proj = Conv2d(in_channels=out_channels, out_channels=out_channels, kernel=1, **init_zero)
 
-    def forward(self, x, emb=None, N_views_xa=1):
+        if self.num_cross_attn_heads:
+            self.cross_attention = CrossAttention(q_channels=out_channels, kv_channels=context_channels)
+
+    def forward(self, x, context, emb=None, N_views_xa=1):
         orig = x
         x = self.conv0(silu(self.norm0(x)))
 
@@ -268,6 +343,10 @@ class UNetBlock(torch.nn.Module):
                 x = x.reshape(B // N_views_xa, N_views_xa, H, W, C).permute(0, 1, 4, 2, 3)
                 # (B/N, N, C, H, W) -> # (B, C, H, W) 
                 x = x.reshape(B, C, H, W)
+
+        if self.num_cross_attn_heads:
+            x = self.cross_attention(x, context)
+
         return x
 
 
@@ -291,6 +370,8 @@ class SongUNet(nn.Module):
         channel_mult_emb    = 4,            # Multiplier for the dimensionality of the embedding vector.
         num_blocks          = 4,            # Number of residual blocks per resolution.
         attn_resolutions    = [16],         # List of resolutions with self-attention.
+        cond_resolutions    = [16],         # List of resolutions conditioned on provided context via cross-attention.
+        num_context_channels    = 0,            # Number of channels that the context has
         dropout             = 0.10,         # Dropout probability of intermediate activations.
         label_dropout       = 0,            # Dropout probability of class labels for classifier-free guidance.
 
@@ -356,7 +437,8 @@ class SongUNet(nn.Module):
                 cin = cout
                 cout = model_channels * mult
                 attn = (res in attn_resolutions)
-                self.enc[f'{res}x{res}_block{idx}'] = UNetBlock(in_channels=cin, out_channels=cout, attention=attn, **block_kwargs)
+                cond = (res in cond_resolutions)
+                self.enc[f'{res}x{res}_block{idx}'] = UNetBlock(in_channels=cin, out_channels=cout, attention=attn, condition_via_cross_attn=cond, context_channels=num_context_channels, **block_kwargs)
         skips = [block.out_channels for name, block in self.enc.items() if 'aux' not in name]
 
         # Decoder.
@@ -372,14 +454,15 @@ class SongUNet(nn.Module):
                 cin = cout + skips.pop()
                 cout = model_channels * mult
                 attn = (idx == num_blocks and res in attn_resolutions)
-                self.dec[f'{res}x{res}_block{idx}'] = UNetBlock(in_channels=cin, out_channels=cout, attention=attn, **block_kwargs)
+                cond = (res in cond_resolutions)
+                self.dec[f'{res}x{res}_block{idx}'] = UNetBlock(in_channels=cin, out_channels=cout, attention=attn, condition_via_cross_attn=cond, context_channels=num_context_channels, **block_kwargs)
             if decoder_type == 'skip' or level == 0:
                 if decoder_type == 'skip' and level < len(channel_mult) - 1:
                     self.dec[f'{res}x{res}_aux_up'] = Conv2d(in_channels=out_channels, out_channels=out_channels, kernel=0, up=True, resample_filter=resample_filter)
                 self.dec[f'{res}x{res}_aux_norm'] = GroupNorm(num_channels=cout, eps=1e-6)
                 self.dec[f'{res}x{res}_aux_conv'] = Conv2d(in_channels=cout, out_channels=out_channels, kernel=3, init_weight=0.2, **init)# init_zero)
 
-    def forward(self, x, film_camera_emb=None, N_views_xa=1):
+    def forward(self, x, context=None, film_camera_emb=None, N_views_xa=1):
 
         emb = None
 
@@ -402,7 +485,7 @@ class SongUNet(nn.Module):
             elif 'aux_residual' in name:
                 x = skips[-1] = aux = (x + block(aux, N_views_xa)) / np.sqrt(2)
             else:
-                x = block(x, emb=emb, N_views_xa=N_views_xa) if isinstance(block, UNetBlock) \
+                x = block(x, context=context, emb=emb, N_views_xa=N_views_xa) if isinstance(block, UNetBlock) \
                     else block(x, N_views_xa=N_views_xa)
                 skips.append(x)
 
@@ -423,14 +506,14 @@ class SongUNet(nn.Module):
                     # foreground features
                     # but it's not good for gradient flow and background features
                     x = torch.cat([x, skips.pop()], dim=1)
-                x = block(x, emb=emb, N_views_xa=N_views_xa)
+                x = block(x, context=context, emb=emb, N_views_xa=N_views_xa)
         return aux
 
 # ================== End of implementation taken from EDM ===============
 # NVIDIA copyright does not apply to the code below this line
 
 class SingleImageSongUNetPredictor(nn.Module):
-    def __init__(self, cfg, out_channels, bias, scale):
+    def __init__(self, cfg, out_channels, context_channels, bias, scale):
         super(SingleImageSongUNetPredictor, self).__init__()
         self.out_channels = out_channels
         self.cfg = cfg
@@ -450,7 +533,9 @@ class SingleImageSongUNetPredictor(nn.Module):
                                 num_blocks=cfg.model.num_blocks,
                                 emb_dim_in=emb_dim_in,
                                 channel_mult_noise=0,
-                                attn_resolutions=cfg.model.attention_resolutions)
+                                attn_resolutions=cfg.model.attention_resolutions,
+                                cond_resolutions=cfg.model.context.cross_attention_resolutions,
+                                num_context_channels=context_channels)
         self.out = nn.Conv2d(in_channels=sum(out_channels), 
                                  out_channels=sum(out_channels),
                                  kernel_size=1)
@@ -464,16 +549,17 @@ class SingleImageSongUNetPredictor(nn.Module):
                 self.out.bias[start_channels:start_channels+out_channel], b)
             start_channels += out_channel
 
-    def forward(self, x, film_camera_emb=None, N_views_xa=1):
-        x = self.encoder(x, 
+    def forward(self, x, context, film_camera_emb=None, N_views_xa=1):
+        x = self.encoder(x,
+                         context=context,
                          film_camera_emb=film_camera_emb,
                          N_views_xa=N_views_xa)
 
         return self.out(x)
 
-def networkCallBack(cfg, name, out_channels, **kwargs):
+def networkCallBack(cfg, name, out_channels, context_channels, **kwargs):
     if name == "SingleUNet":
-        return SingleImageSongUNetPredictor(cfg, out_channels, **kwargs)
+        return SingleImageSongUNetPredictor(cfg, out_channels, context_channels, **kwargs)
     else:
         raise NotImplementedError
 
@@ -511,11 +597,16 @@ class GaussianSplatPredictor(nn.Module):
         if cfg.opt.depth_predictor.use:
             self.depth_predictor = DepthPredictor(cfg)
 
+        if cfg.model.context.use:
+            self.context_provider = DepthPredictor(cfg)
+            self.context_channels = cfg.model.context.channels
+
         if cfg.model.network_with_offset:
             split_dimensions, scale_inits, bias_inits = self.get_splits_and_inits(True, cfg)
             self.network_with_offset = networkCallBack(cfg, 
                                         cfg.model.name,
                                         split_dimensions,
+                                        context_channels=self.context_channels,
                                         scale = scale_inits,
                                         bias = bias_inits)
             assert not cfg.model.network_without_offset, "Can only have one network"
@@ -524,6 +615,7 @@ class GaussianSplatPredictor(nn.Module):
             self.network_wo_offset = networkCallBack(cfg, 
                                         cfg.model.name,
                                         split_dimensions,
+                                        context_channels=self.context_channels,
                                         scale = scale_inits,
                                         bias = bias_inits)
             assert not cfg.model.network_with_offset, "Can only have one network"
@@ -754,9 +846,13 @@ class GaussianSplatPredictor(nn.Module):
         source_cameras_view_to_world = source_cameras_view_to_world.reshape(B*N_views, *source_cameras_view_to_world.shape[2:])
         x = x.contiguous(memory_format=torch.channels_last)
 
-        if self.cfg.model.network_with_offset:
+        if self.cfg.model.context.use:
+            context = self.context_provider(x)
+            context = context.unsqueeze(1)
 
+        if self.cfg.model.network_with_offset:
             split_network_outputs = self.network_with_offset(x,
+                                                             context=context,
                                                              film_camera_emb=film_camera_emb,
                                                              N_views_xa=N_views_xa
                                                              )
@@ -769,7 +865,8 @@ class GaussianSplatPredictor(nn.Module):
             pos = self.get_pos_from_network_output(depth, offset, focals_pixels, const_offset=const_offset)
 
         else:
-            split_network_outputs = self.network_wo_offset(x, 
+            split_network_outputs = self.network_wo_offset(x,
+                                                           context=context, 
                                                            film_camera_emb=film_camera_emb,
                                                            N_views_xa=N_views_xa
                                                            ).split(self.split_dimensions_without_offset, dim=1)
