@@ -58,9 +58,14 @@ model:
   isotropic: false
   depth_context:
     use: false
-    cross_attention_resolutions: []
-    channels: 0
+    cross_attention_resolutions: [] # [16] to do it at bottleneck
+    channels: 1
     model_type: DPT_Large # DPT_BEiT_L_512, DPT_Large, DPT_Hybrid, MiDaS_small
+  semantic_context:
+    use: false
+    cross_attention_resolutions: [] # [16] to do it at bottleneck
+    dim: 1000
+    model_type: Dino # Dino, CLIP
 
 logging:
   ckpt_iterations: 1000

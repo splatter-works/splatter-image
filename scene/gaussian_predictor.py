@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-import torchvision 
+import torchvision
+import torchvision.transforms as T
 import timm
 
 import numpy as np
@@ -194,7 +195,7 @@ class CrossAttentionBlock(torch.nn.Module):
 
         return x
 
-class CrossAttention(torch.nn.Module):
+class SpatialCrossAttentionBlock(torch.nn.Module):
     """Cross attention block allowing different channel dimensions for query and key-value inputs.
     
     Implements cross attention mechanism where queries from one feature space attend to
@@ -216,7 +217,7 @@ class CrossAttention(torch.nn.Module):
     H', W' are height and width of key-value features.
     """
     def __init__(self, q_channels, kv_channels, num_heads=1, eps=1e-5):
-        super(CrossAttention, self).__init__()
+        super(SpatialCrossAttentionBlock, self).__init__()
 
         self.num_heads = num_heads
         init_attn = dict(init_mode='xavier_uniform', init_weight=np.sqrt(0.2))
@@ -264,6 +265,74 @@ class CrossAttention(torch.nn.Module):
 
         return x
 
+
+class GlobalCrossAttentionBlock(torch.nn.Module):
+    """Cross attention between spatial features and global context vectors.
+    
+    Implements cross attention where spatial queries (4D) attend to global key-value pairs (2D).
+    Projects features to a common attention space while handling different input dimensions.
+
+    Args:
+        q_channels (int): Number of channels in query input
+        kv_channels (int): Number of channels in key-value input 
+        num_heads (int, optional): Number of attention heads. Default: 1
+        eps (float, optional): Epsilon for normalization stability. Default: 1e-5
+
+    Shape:
+        - Query: `(B, q_channels, H, W)`
+        - Key-Value: `(B, kv_channels)`
+        - Output: `(B, q_channels, H, W)`
+        
+    where B is batch size, H, W are spatial dimensions of query features.
+    Key-value input is a global context vector without spatial dimensions.
+    """
+    def __init__(self, q_channels, kv_channels, num_heads=1, eps=1e-5):
+        super(GlobalCrossAttentionBlock, self).__init__()
+
+        self.num_heads = num_heads
+        init_attn = dict(init_mode='xavier_uniform', init_weight=np.sqrt(0.2))
+        init_zero = dict(init_mode='xavier_uniform', init_weight=1e-5)
+
+        # Query normalization remains GroupNorm (4D)
+        self.q_norm = GroupNorm(num_channels=q_channels, eps=eps)
+        # KV normalization changed to LayerNorm (2D)
+        self.kv_norm = torch.nn.LayerNorm(kv_channels, eps=eps)
+
+        attn_dim = q_channels
+        # Query projection remains Conv2d
+        self.q_proj = Conv2d(in_channels=q_channels, out_channels=attn_dim, kernel=1, **init_attn)
+        # KV projection changed to Linear
+        self.kv_proj = Linear(kv_channels, attn_dim * 2, **init_attn)
+        self.out_proj = Conv2d(in_channels=attn_dim, out_channels=q_channels, kernel=3, **init_zero)
+
+    def forward(self, q: torch.Tensor, kv: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            q (torch.Tensor): Query input tensor of shape (B, q_channels, H, W)
+            kv (torch.Tensor): Key-value input tensor of shape (B, kv_channels)
+        """
+        # Process query - remains same
+        q_proj = self.q_proj(self.q_norm(q)).reshape(
+            q.shape[0] * self.num_heads, q.shape[1] // self.num_heads, -1)
+        
+        # Process key-value
+        kv_proj = self.kv_proj(self.kv_norm(kv))  # [B,kv_channels] -> [B, 2*attn_dim]
+        kv_proj = kv_proj.reshape(
+            kv.shape[0] * self.num_heads,          # Batch * heads
+            kv_proj.shape[1] // (2*self.num_heads),# Channels per head
+            2                                       # Split K and V
+        )
+        k_proj, v_proj = kv_proj.unbind(2)
+        # Add a singleton dimension to k_proj and v_proj to match q's spatial dimension
+        k_proj = k_proj.unsqueeze(-1)  # [B*H, C/H, 1]
+        v_proj = v_proj.unsqueeze(-1)  # [B*H, C/H, 1]
+        
+        w = AttentionOp.apply(q_proj, k_proj)
+        a = torch.einsum('nqk,nck->ncq', w, v_proj)
+        x = self.out_proj(a.reshape(*q.shape)).add_(q)
+
+        return x
+
 #----------------------------------------------------------------------------
 # Unified U-Net block with optional up/downsampling and self-attention.
 # Represents the union of all features employed by the DDPM++, NCSN++, and
@@ -275,7 +344,8 @@ class UNetBlock(torch.nn.Module):
         num_heads=None, channels_per_head=64, dropout=0, skip_scale=1, eps=1e-5,
         resample_filter=[1,1], resample_proj=False, adaptive_scale=True,
         init=dict(), init_zero=dict(init_weight=0), init_attn=None,
-        condition_via_cross_attn=False, context_channels=1,
+        spatial_cross_attn=False, global_cross_attn=False, 
+        spatial_cross_attn_context_channels=0, global_cross_attn_context_dim=0, 
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -283,7 +353,9 @@ class UNetBlock(torch.nn.Module):
         if emb_channels is not None:
             self.affine = Linear(in_features=emb_channels, out_features=out_channels*(2 if adaptive_scale else 1), **init)
         self.num_heads = 0 if not attention else num_heads if num_heads is not None else out_channels // channels_per_head
-        self.num_cross_attn_heads =  0 if not condition_via_cross_attn else num_heads if num_heads is not None else out_channels // channels_per_head
+        self.num_heads_spatial_cross_attn = 0 if not spatial_cross_attn else num_heads if num_heads is not None else out_channels // channels_per_head
+        self.num_heads_global_cross_attn =  0 if not global_cross_attn else num_heads if num_heads is not None else out_channels // channels_per_head
+
         self.dropout = dropout
         self.skip_scale = skip_scale
         self.adaptive_scale = adaptive_scale
@@ -303,10 +375,13 @@ class UNetBlock(torch.nn.Module):
             self.qkv = Conv2d(in_channels=out_channels, out_channels=out_channels*3, kernel=1, **(init_attn if init_attn is not None else init))
             self.proj = Conv2d(in_channels=out_channels, out_channels=out_channels, kernel=1, **init_zero)
 
-        if self.num_cross_attn_heads:
-            self.cross_attention = CrossAttention(q_channels=out_channels, kv_channels=context_channels)
+        if self.num_heads_spatial_cross_attn:
+            self.spatial_cross_attn_block = SpatialCrossAttentionBlock(q_channels=out_channels, kv_channels=spatial_cross_attn_context_channels) 
 
-    def forward(self, x, context, emb=None, N_views_xa=1):
+        if self.num_heads_global_cross_attn:
+            self.global_cross_attn_block = GlobalCrossAttentionBlock(q_channels=out_channels, kv_channels=global_cross_attn_context_dim)
+
+    def forward(self, x, global_context, spatial_context, emb=None, N_views_xa=1):
         orig = x
         x = self.conv0(silu(self.norm0(x)))
 
@@ -344,9 +419,12 @@ class UNetBlock(torch.nn.Module):
                 # (B/N, N, C, H, W) -> # (B, C, H, W) 
                 x = x.reshape(B, C, H, W)
 
-        if self.num_cross_attn_heads:
-            x = self.cross_attention(x, context)
+        if self.num_heads_global_cross_attn:
+            x = self.global_cross_attn_block(x, global_context)
 
+        if self.num_heads_spatial_cross_attn:
+            x = self.spatial_cross_attn_block(x, spatial_context)
+            
         return x
 
 
@@ -370,8 +448,10 @@ class SongUNet(nn.Module):
         channel_mult_emb    = 4,            # Multiplier for the dimensionality of the embedding vector.
         num_blocks          = 4,            # Number of residual blocks per resolution.
         attn_resolutions    = [16],         # List of resolutions with self-attention.
-        cond_resolutions    = [16],         # List of resolutions conditioned on provided context via cross-attention.
-        num_context_channels    = 0,            # Number of channels that the context has
+        global_cross_attn_resolutions = [16],
+        spatial_cross_attn_resolutions = [16],
+        global_context_dim = 0,
+        spatial_context_channels    = 0,    # Number of channels that the spatial context has
         dropout             = 0.10,         # Dropout probability of intermediate activations.
         label_dropout       = 0,            # Dropout probability of class labels for classifier-free guidance.
 
@@ -437,8 +517,15 @@ class SongUNet(nn.Module):
                 cin = cout
                 cout = model_channels * mult
                 attn = (res in attn_resolutions)
-                cond = (res in cond_resolutions)
-                self.enc[f'{res}x{res}_block{idx}'] = UNetBlock(in_channels=cin, out_channels=cout, attention=attn, condition_via_cross_attn=cond, context_channels=num_context_channels, **block_kwargs)
+                spat_attn = (res in spatial_cross_attn_resolutions)
+                glob_attn = (res in global_cross_attn_resolutions)
+                self.enc[f'{res}x{res}_block{idx}'] = UNetBlock(in_channels=cin, out_channels=cout, attention=attn,
+                                                                global_cross_attn=glob_attn,
+                                                                spatial_cross_attn=spat_attn,
+                                                                global_cross_attn_context_dim=global_context_dim,
+                                                                spatial_cross_attn_context_channels=spatial_context_channels,
+                                                                **block_kwargs)
+
         skips = [block.out_channels for name, block in self.enc.items() if 'aux' not in name]
 
         # Decoder.
@@ -454,15 +541,21 @@ class SongUNet(nn.Module):
                 cin = cout + skips.pop()
                 cout = model_channels * mult
                 attn = (idx == num_blocks and res in attn_resolutions)
-                cond = (res in cond_resolutions)
-                self.dec[f'{res}x{res}_block{idx}'] = UNetBlock(in_channels=cin, out_channels=cout, attention=attn, condition_via_cross_attn=cond, context_channels=num_context_channels, **block_kwargs)
+                spat_attn = (res in spatial_cross_attn_resolutions)
+                glob_attn = (res in global_cross_attn_resolutions)
+                self.dec[f'{res}x{res}_block{idx}'] = UNetBlock(in_channels=cin, out_channels=cout, attention=attn,
+                                                                global_cross_attn=glob_attn,
+                                                                spatial_cross_attn=spat_attn,
+                                                                global_cross_attn_context_dim=global_context_dim,
+                                                                spatial_cross_attn_context_channels=spatial_context_channels,
+                                                                **block_kwargs)
             if decoder_type == 'skip' or level == 0:
                 if decoder_type == 'skip' and level < len(channel_mult) - 1:
                     self.dec[f'{res}x{res}_aux_up'] = Conv2d(in_channels=out_channels, out_channels=out_channels, kernel=0, up=True, resample_filter=resample_filter)
                 self.dec[f'{res}x{res}_aux_norm'] = GroupNorm(num_channels=cout, eps=1e-6)
                 self.dec[f'{res}x{res}_aux_conv'] = Conv2d(in_channels=cout, out_channels=out_channels, kernel=3, init_weight=0.2, **init)# init_zero)
 
-    def forward(self, x, context=None, film_camera_emb=None, N_views_xa=1):
+    def forward(self, x, global_context=None, spatial_context=None, film_camera_emb=None, N_views_xa=1):
 
         emb = None
 
@@ -485,7 +578,7 @@ class SongUNet(nn.Module):
             elif 'aux_residual' in name:
                 x = skips[-1] = aux = (x + block(aux, N_views_xa)) / np.sqrt(2)
             else:
-                x = block(x, context=context, emb=emb, N_views_xa=N_views_xa) if isinstance(block, UNetBlock) \
+                x = block(x, global_context=global_context, spatial_context=spatial_context, emb=emb, N_views_xa=N_views_xa) if isinstance(block, UNetBlock) \
                     else block(x, N_views_xa=N_views_xa)
                 skips.append(x)
 
@@ -506,14 +599,14 @@ class SongUNet(nn.Module):
                     # foreground features
                     # but it's not good for gradient flow and background features
                     x = torch.cat([x, skips.pop()], dim=1)
-                x = block(x, context=context, emb=emb, N_views_xa=N_views_xa)
+                x = block(x, global_context=global_context, spatial_context=spatial_context, emb=emb, N_views_xa=N_views_xa)
         return aux
 
 # ================== End of implementation taken from EDM ===============
 # NVIDIA copyright does not apply to the code below this line
 
 class SingleImageSongUNetPredictor(nn.Module):
-    def __init__(self, cfg, out_channels, context_channels, bias, scale):
+    def __init__(self, cfg, out_channels, bias, scale):
         super(SingleImageSongUNetPredictor, self).__init__()
         self.out_channels = out_channels
         self.cfg = cfg
@@ -526,6 +619,14 @@ class SingleImageSongUNetPredictor(nn.Module):
             in_channels = 3 + additional_chanels
             emb_dim_in = 6 * cfg.cam_embd.dimension
 
+        if cfg.model.depth_context.use:
+            spatial_context_provider_name = cfg.model.depth_context.model_type
+            self.spatial_context_provider = DepthPredictor(spatial_context_provider_name)
+
+        if cfg.model.semantic_context.use:
+            global_context_provider_name = cfg.model.semantic_context.model_type
+            self.global_context_provider = SemanticContextProvider()
+
         self.encoder = SongUNet(cfg.data.training_resolution, 
                                 in_channels, 
                                 sum(out_channels),
@@ -534,8 +635,10 @@ class SingleImageSongUNetPredictor(nn.Module):
                                 emb_dim_in=emb_dim_in,
                                 channel_mult_noise=0,
                                 attn_resolutions=cfg.model.attention_resolutions,
-                                cond_resolutions=cfg.model.depth_context.cross_attention_resolutions,
-                                num_context_channels=context_channels)
+                                global_cross_attn_resolutions=cfg.model.semantic_context.cross_attention_resolutions,
+                                global_context_dim=cfg.model.semantic_context.dim,
+                                spatial_cross_attn_resolutions=cfg.model.depth_context.cross_attention_resolutions,
+                                spatial_context_channels=cfg.model.depth_context.channels)
         self.out = nn.Conv2d(in_channels=sum(out_channels), 
                                  out_channels=sum(out_channels),
                                  kernel_size=1)
@@ -549,17 +652,26 @@ class SingleImageSongUNetPredictor(nn.Module):
                 self.out.bias[start_channels:start_channels+out_channel], b)
             start_channels += out_channel
 
-    def forward(self, x, context, film_camera_emb=None, N_views_xa=1):
+    def forward(self, x, film_camera_emb=None, N_views_xa=1):
+        global_context, spatial_context = None, None
+
+        if self.cfg.model.semantic_context.use:
+            global_context = self.global_context_provider(x)
+
+        if self.cfg.model.depth_context.use:
+            spatial_context = self.spatial_context_provider(x)
+
         x = self.encoder(x,
-                         context=context,
+                         global_context=global_context,
+                         spatial_context=spatial_context,
                          film_camera_emb=film_camera_emb,
                          N_views_xa=N_views_xa)
 
         return self.out(x)
 
-def networkCallBack(cfg, name, out_channels, context_channels, **kwargs):
+def networkCallBack(cfg, name, out_channels, **kwargs):
     if name == "SingleUNet":
-        return SingleImageSongUNetPredictor(cfg, out_channels, context_channels, **kwargs)
+        return SingleImageSongUNetPredictor(cfg, out_channels, **kwargs)
     else:
         raise NotImplementedError
 
@@ -583,8 +695,38 @@ class DepthPredictor(nn.Module):
         input_images = input_images[:, :3, ...]
         with torch.no_grad():
             depth_map = self.model(input_images)
+            depth_map = depth_map.unsqueeze(1) # (B, H, W) -> (B, 1, H, W)
 
         return depth_map
+
+
+class SemanticContextProvider(nn.Module):
+    def __init__(self):
+        super(SemanticContextProvider, self).__init__()
+        self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14_reg_lc')
+        self.model.eval()
+        for param in self.model.parameters():
+            param.requires_grad = False
+
+    def forward(self, input_images):
+            """
+            Generate DINOv2 embeddings for input images.
+            Args:
+                input_images (torch.Tensor): Input tensor of shape  [N, 3, H, W].
+            Returns:
+                torch.Tensor: DINOv2 embeddings of shape [N, 512].
+            """
+            # Apply DINOv2 preprocessing pipeline
+            preprocess_transform = T.Compose([
+                T.Resize((224, 224)),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), # ImatgeNet distrbution
+            ])
+            input_images = preprocess_transform(input_images)  # Shape: [N, 3, 224, 224]
+
+            with torch.no_grad():
+                semantic_emb = self.model(input_images)  # Shape: [N, 1000]
+
+            return semantic_emb
 
 class GaussianSplatPredictor(nn.Module):
     def __init__(self, cfg):
@@ -596,19 +738,11 @@ class GaussianSplatPredictor(nn.Module):
         if cfg.opt.depth_predictor.use:
             self.depth_predictor = DepthPredictor(cfg.opt.depth_predictor.type)
 
-        if cfg.model.depth_context.use:
-            self.context_provider = DepthPredictor(cfg.model.depth_context.model_type)
-            self.context_channels = cfg.model.depth_context.channels
-        else:
-            self.context_provider = None
-            self.context_channels = 0
-
         if cfg.model.network_with_offset:
             split_dimensions, scale_inits, bias_inits = self.get_splits_and_inits(True, cfg)
             self.network_with_offset = networkCallBack(cfg, 
                                         cfg.model.name,
                                         split_dimensions,
-                                        context_channels=self.context_channels,
                                         scale = scale_inits,
                                         bias = bias_inits)
             assert not cfg.model.network_without_offset, "Can only have one network"
@@ -617,7 +751,6 @@ class GaussianSplatPredictor(nn.Module):
             self.network_wo_offset = networkCallBack(cfg, 
                                         cfg.model.name,
                                         split_dimensions,
-                                        context_channels=self.context_channels,
                                         scale = scale_inits,
                                         bias = bias_inits)
             assert not cfg.model.network_with_offset, "Can only have one network"
@@ -842,21 +975,13 @@ class GaussianSplatPredictor(nn.Module):
 
         if self.cfg.opt.depth_predictor.use:
             depth_maps = self.depth_predictor(x[:, :3, ...])
-            depth_maps = depth_maps.unsqueeze(1)
             x = torch.cat((x, depth_maps), dim=1) 
 
         source_cameras_view_to_world = source_cameras_view_to_world.reshape(B*N_views, *source_cameras_view_to_world.shape[2:])
         x = x.contiguous(memory_format=torch.channels_last)
 
-        if self.cfg.model.depth_context.use:
-            context = self.context_provider(x)
-            context = context.unsqueeze(1)
-        else:
-            context = None
-
         if self.cfg.model.network_with_offset:
             split_network_outputs = self.network_with_offset(x,
-                                                             context=context,
                                                              film_camera_emb=film_camera_emb,
                                                              N_views_xa=N_views_xa
                                                              )
@@ -870,7 +995,6 @@ class GaussianSplatPredictor(nn.Module):
 
         else:
             split_network_outputs = self.network_wo_offset(x,
-                                                           context=context, 
                                                            film_camera_emb=film_camera_emb,
                                                            N_views_xa=N_views_xa
                                                            ).split(self.split_dimensions_without_offset, dim=1)
