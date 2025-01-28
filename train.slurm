@@ -8,6 +8,7 @@
 #SBATCH --output=runs/output_%j.log    # Output and error log
 #SBATCH --error=runs/output_%j.log     # Redirect error to the same file
 #SBATCH --time=06:00:00                # Walltime
+#SBATCH --job-name=crossatt25kdptlarge # Name of job
 
 #Load modules
 module load CUDA/11.6.0 \
@@ -17,7 +18,7 @@ module load CUDA/11.6.0 \
 
 # Activate the conda environment
 eval "$(conda shell.bash hook)"
-conda activate rec1
+conda activate splatter-image
 
 # Go to the root of the git repo
 GIT_ROOT=$(git rev-parse --show-toplevel)
@@ -25,4 +26,5 @@ cd "$GIT_ROOT"
 
 # Run the training script
 echo "Stage one training:\n"
-python train_network.py +dataset=hydrants +experiment=lpips_5k.yaml opt.depth_predictor.use=true opt.depth_predictor.type=DPT_Large
+python train_network.py +dataset=hydrants \
+        model.depth_context.use=true model.depth_context.model_type=DPT_Large \

@@ -33,7 +33,7 @@ opt:
   overfit: false
   depth_predictor: 
     use: false
-    type: DPT_Large # DPT_Large, DPT_Hybrid, MiDaS_small
+    type: DPT_Large # DPT_BEiT_L_512, DPT_Large, DPT_Hybrid, MiDaS_small
 
 model:
   max_sh_degree: 1
@@ -56,10 +56,11 @@ model:
   cross_view_attention: true
   base_dim: 128
   isotropic: false
-  context:
-    use: true
+  depth_context:
+    use: false
     cross_attention_resolutions: [16]
     channels: 1
+    model_type: DPT_Large # DPT_BEiT_L_512, DPT_Large, DPT_Hybrid, MiDaS_small
 
 logging:
   ckpt_iterations: 1000

@@ -534,7 +534,7 @@ class SingleImageSongUNetPredictor(nn.Module):
                                 emb_dim_in=emb_dim_in,
                                 channel_mult_noise=0,
                                 attn_resolutions=cfg.model.attention_resolutions,
-                                cond_resolutions=cfg.model.context.cross_attention_resolutions,
+                                cond_resolutions=cfg.model.depth_context.cross_attention_resolutions,
                                 num_context_channels=context_channels)
         self.out = nn.Conv2d(in_channels=sum(out_channels), 
                                  out_channels=sum(out_channels),
@@ -568,9 +568,8 @@ class DepthPredictor(nn.Module):
     See supported depth models at https://pytorch.org/hub/intelisl_midas_v2/
     """
 
-    def __init__(self, cfg):
+    def __init__(self, model_type):
         super(DepthPredictor, self).__init__()
-        model_type = cfg.opt.depth_predictor.type
         self.model = torch.hub.load("intel-isl/MiDaS", model_type) 
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         self.model.to(device)
@@ -595,11 +594,11 @@ class GaussianSplatPredictor(nn.Module):
             "Need at least one network"
         
         if cfg.opt.depth_predictor.use:
-            self.depth_predictor = DepthPredictor(cfg)
+            self.depth_predictor = DepthPredictor(cfg.opt.depth_predictor.type)
 
-        if cfg.model.context.use:
-            self.context_provider = DepthPredictor(cfg)
-            self.context_channels = cfg.model.context.channels
+        if cfg.model.depth_context.use:
+            self.context_provider = DepthPredictor(cfg.model.depth_context.model_type)
+            self.context_channels = cfg.model.depth_context.channels
 
         if cfg.model.network_with_offset:
             split_dimensions, scale_inits, bias_inits = self.get_splits_and_inits(True, cfg)
@@ -846,7 +845,7 @@ class GaussianSplatPredictor(nn.Module):
         source_cameras_view_to_world = source_cameras_view_to_world.reshape(B*N_views, *source_cameras_view_to_world.shape[2:])
         x = x.contiguous(memory_format=torch.channels_last)
 
-        if self.cfg.model.context.use:
+        if self.cfg.model.depth_context.use:
             context = self.context_provider(x)
             context = context.unsqueeze(1)
 
