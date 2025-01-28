@@ -599,6 +599,9 @@ class GaussianSplatPredictor(nn.Module):
         if cfg.model.depth_context.use:
             self.context_provider = DepthPredictor(cfg.model.depth_context.model_type)
             self.context_channels = cfg.model.depth_context.channels
+        else:
+            self.context_provider = None
+            self.context_channels = 0
 
         if cfg.model.network_with_offset:
             split_dimensions, scale_inits, bias_inits = self.get_splits_and_inits(True, cfg)
@@ -848,6 +851,8 @@ class GaussianSplatPredictor(nn.Module):
         if self.cfg.model.depth_context.use:
             context = self.context_provider(x)
             context = context.unsqueeze(1)
+        else:
+            context = None
 
         if self.cfg.model.network_with_offset:
             split_network_outputs = self.network_with_offset(x,
