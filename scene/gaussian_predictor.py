@@ -478,11 +478,13 @@ def networkCallBack(cfg, name, out_channels, **kwargs):
         raise NotImplementedError
 
 class DepthPredictor(nn.Module):
+    """
+    See supported depth models at https://pytorch.org/hub/intelisl_midas_v2/
+    """
+
     def __init__(self, cfg):
         super(DepthPredictor, self).__init__()
         model_type = cfg.opt.depth_predictor.type
-        assert model_type in ['DPT_Large', 'DPT_Hybrid', 'MiDaS_small'], \
-            "See supported depth models at https://pytorch.org/hub/intelisl_midas_v2/"
         self.model = torch.hub.load("intel-isl/MiDaS", model_type) 
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         self.model.to(device)
