@@ -254,4 +254,4 @@ dependencies:
       - websockets==11.0.3
       - xmod==1.8.1
       - yarl==1.15.2
-      - zipp==3.20.2c
+      - zipp==3.20.2
