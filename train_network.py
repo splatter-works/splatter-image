@@ -126,20 +126,14 @@ def main(cfg: DictConfig):
         num_workers = 0
         persistent_workers = False
 
-    if cfg.opt.overfit:
-        dataset = get_dataset(cfg, "val")
-        val_dataset = dataset
-        test_dataset = dataset 
-    else:
-        dataset = get_dataset(cfg, "test")
-        val_dataset = get_dataset(cfg, "val")
-        test_dataset = get_dataset(cfg, "vis")
+    dataset = get_dataset(cfg, "train")
     dataloader = DataLoader(dataset, 
                             batch_size=cfg.opt.batch_size,
                             shuffle=True,
                             num_workers=num_workers,
                             persistent_workers=persistent_workers)
 
+    val_dataset = get_dataset(cfg, "val")
     val_dataloader = DataLoader(val_dataset, 
                                 batch_size=1,
                                 shuffle=False,
@@ -147,6 +141,7 @@ def main(cfg: DictConfig):
                                 persistent_workers=True,
                                 pin_memory=True)
 
+    test_dataset = get_dataset(cfg, "vis")
     test_dataloader = DataLoader(test_dataset, 
                                  batch_size=1,
                                  shuffle=True)

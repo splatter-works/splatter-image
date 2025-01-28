@@ -1,6 +1,6 @@
 # @package _global_
 opt:
-  iterations: 100001
-  pretrained_ckpt: null
+  iterations: 5001
+  pretrained_ckpt: /rhome/sade/splatter-image/experiments_out/2025-01-25/dino_25k_1st_phase
   lambda_lpips: 0.01
   base_lr: 0.000005
