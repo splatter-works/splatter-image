@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torchvision 
 import timm
+import torchvision.transforms as T
 
 import numpy as np
 import torch
@@ -264,6 +265,44 @@ class CrossAttention(torch.nn.Module):
 
         return x
 
+
+#----------------------------------------------------------------------------
+# DINOv2
+class DINOHandler(nn.Module):
+    def __init__(self, device="cuda"):
+        super(DINOHandler, self).__init__()
+        self.dino_model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitl14_reg_lc')
+        self.device = device
+        self.dino_model.eval()
+
+        for param in self.dino_model.parameters():
+            param.requires_grad = False
+
+    def forward(self, input_images):
+        """
+        Generate DINOv2 embeddings for input images.
+        Args:
+            input_images (torch.Tensor): Input tensor of shape [B, 1, 4, H, W].
+        Returns:
+            torch.Tensor: DINOv2 embeddings of shape [B, 512].
+        """
+
+        # Remove depth dimension
+        input_images = input_images[:, :, :3, ...].squeeze(1)
+
+        # Apply DINOv2 preprocessing pipeline
+        preprocess_transform = T.Compose([
+            T.Resize((224, 224)),
+            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), # ImatgeNet distrbution
+        ])
+        input_images = preprocess_transform(input_images)  # Shape: [B, 3, 224, 224]
+
+        # Compute embeddings
+        with torch.no_grad():
+            dino_embeddings = self.dino_model(input_images)  # Shape: [B, 1000]
+
+        return dino_embeddings
+
 #----------------------------------------------------------------------------
 # Unified U-Net block with optional up/downsampling and self-attention.
 # Represents the union of all features employed by the DDPM++, NCSN++, and
@@ -388,6 +427,8 @@ class SongUNet(nn.Module):
         super().__init__()
         self.label_dropout = label_dropout
         self.emb_dim_in = emb_dim_in
+        self.dino_projector = nn.Linear(1000, 256)
+        self.channel_reducer = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=1)
         if emb_dim_in > 0:
             emb_channels = model_channels * channel_mult_emb
         else:
@@ -462,7 +503,7 @@ class SongUNet(nn.Module):
                 self.dec[f'{res}x{res}_aux_norm'] = GroupNorm(num_channels=cout, eps=1e-6)
                 self.dec[f'{res}x{res}_aux_conv'] = Conv2d(in_channels=cout, out_channels=out_channels, kernel=3, init_weight=0.2, **init)# init_zero)
 
-    def forward(self, x, context=None, film_camera_emb=None, N_views_xa=1):
+    def forward(self, x, context=None, dino_embeddings=None, film_camera_emb=None, N_views_xa=1):
 
         emb = None
 
@@ -488,6 +529,18 @@ class SongUNet(nn.Module):
                 x = block(x, context=context, emb=emb, N_views_xa=N_views_xa) if isinstance(block, UNetBlock) \
                     else block(x, N_views_xa=N_views_xa)
                 skips.append(x)
+
+
+
+        # Bottleneck
+        dino_embeddings = dino_embeddings.to(self.dino_projector.weight.dtype)  # Match dtype
+        dino_features = self.dino_projector(dino_embeddings)
+        dino_features = dino_features.unsqueeze(2).unsqueeze(3)  # Shape: [batch_size, 256, 1, 1]
+        dino_features = dino_features.expand(-1, -1, x.shape[2], x.shape[3])  # Shape: [batch_size, 256, 16, 16]
+
+        # Step 4: Fuse with x
+        x = torch.cat([x, dino_features], dim=1) 
+        x = self.channel_reducer(x)  # Shape: [1, 256, 16, 16]
 
         # Decoder.
         aux = None
@@ -549,9 +602,10 @@ class SingleImageSongUNetPredictor(nn.Module):
                 self.out.bias[start_channels:start_channels+out_channel], b)
             start_channels += out_channel
 
-    def forward(self, x, context, film_camera_emb=None, N_views_xa=1):
+    def forward(self, x, context, dino_embeddings=None, film_camera_emb=None, N_views_xa=1):
         x = self.encoder(x,
                          context=context,
+                         dino_embeddings=dino_embeddings,
                          film_camera_emb=film_camera_emb,
                          N_views_xa=N_views_xa)
 
@@ -589,6 +643,7 @@ class GaussianSplatPredictor(nn.Module):
     def __init__(self, cfg):
         super(GaussianSplatPredictor, self).__init__()
         self.cfg = cfg
+        self.dino_model = DINOHandler()
         assert cfg.model.network_with_offset or cfg.model.network_without_offset, \
             "Need at least one network"
         
@@ -808,6 +863,8 @@ class GaussianSplatPredictor(nn.Module):
                 focals_pixels=None,
                 activate_output=True):
 
+        dino_embeddings = self.dino_model(x)
+
         B = x.shape[0]
         N_views = x.shape[1]
         # UNet attention will reshape outputs so that there is cross-view attention
@@ -851,6 +908,7 @@ class GaussianSplatPredictor(nn.Module):
         if self.cfg.model.network_with_offset:
             split_network_outputs = self.network_with_offset(x,
                                                              context=context,
+                                                             dino_embeddings=dino_embeddings,
                                                              film_camera_emb=film_camera_emb,
                                                              N_views_xa=N_views_xa
                                                              )
@@ -865,6 +923,7 @@ class GaussianSplatPredictor(nn.Module):
         else:
             split_network_outputs = self.network_wo_offset(x,
                                                            context=context, 
+                                                           dino_embeddings=dino_embeddings,
                                                            film_camera_emb=film_camera_emb,
                                                            N_views_xa=N_views_xa
                                                            ).split(self.split_dimensions_without_offset, dim=1)

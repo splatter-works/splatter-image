@@ -15,7 +15,7 @@ data:
   input_images: 1
   origin_distances: false
 opt:
-  iterations: 25001 
+  iterations: 25001
   base_lr: 0.00005
   batch_size: 8
   betas:
@@ -62,8 +62,8 @@ model:
     channels: 1
 
 logging:
-  ckpt_iterations: 1000
-  val_log: 1000
+  ckpt_iterations: 5000
+  val_log: 5000
   loss_log: 10
-  loop_log: 1000
-  render_log: 1000
+  loop_log: 5000
+  render_log: 5000
