@@ -1,22 +1,8 @@
 # splatter-image++
-Official implementation of **"Splatter Image: Ultra-Fast Single-View 3D Reconstruction" (CVPR 2024)**
+Case study on enhancing monocular object reconstruction based on the 
+ **"Splatter Image: Ultra-Fast Single-View 3D Reconstruction" (CVPR 2024)**
 
-[16 Apr 2024] Several big updates to the project since the first release:
-- We can now reconstruct **any object**: we trained open-category model trained on Objaverse in just 7 GPU days
-- We now have a [demo](https://huggingface.co/spaces/szymanowiczs/splatter_image) where you can upload your own pictures of **any** object and have our model reconstruct it
-- Models for all 6 datasets are now !released!. We trained 6 models: on Objaverse, multi-category ShapeNet, CO3D hydrants, CO3D teddybears, ShapeNet cars and ShapeNet chairs.
-- SOTA on multi-category ShapeNet
-- Support for multi-GPU training
-- No camera pose pre-processing in CO3D
-
-<img src="./demo_examples/demo_screenshot.png"
-            alt="Demo screenshot."/>
-# Demo
-
-Check out the online [demo](https://huggingface.co/spaces/szymanowiczs/splatter_image). Running the demo locally will often be even faster and you will be able to see the loops rendered with Gaussian Splatting (as opposed to the extracted .ply object which can show artefacts). To run the demo locally, simply follow the installation instructions below, and afterwards call:
-```
-python gradio_app.py
-```
+Authors: Adam Deryło, Emin Sadikhov, Małgorzata Gwiazda (equal contribution)
 
 # Installation
 
@@ -150,6 +136,21 @@ To train a 2-view model run:
 ```
 python train_network.py +dataset=cars cam_embd=pose_pos data.input_images=2 opt.imgs_per_obj=5
 ```
+### Experiments
+
+In order to reproduce the *semantic embeddings* modification mentioned in the paper one has to run:
+```
+python train_network.py +dataset=$dataset_name \
+model.semantic_context.use=true model.semantic_context.cross_attention_resolutions=[16]
+```
+And as for the *depth conditioning* one can turn it on via:
+```
+python train_network.py +dataset=$dataset_name \
+model.depth_context.use=true model.depth_context.cross_attention_resolutions=[16]
+```
+Furthermore, code with experiments on semantic conditioning via embedding concatenation is on the branches `DINO` and `CLIP` and code for reproducing loss schedule experiments is on the branch `var_loss`. 
+
+### Overfiting
 
 Before scheduling a longer training job, it is useful to perform a sanity check to ensure that the model can at least overfit on a single object. To verify this, run the following command on a hydrant dataset as an example:
 ```
@@ -164,20 +165,3 @@ Training loop is implemented in `train_network.py` and evaluation code is in `ev
 ## Camera conventions
 
 Gaussian rasterizer assumes row-major order of rigid body transform matrices, i.e. that position vectors are row vectors. It also requires cameras in the COLMAP / OpenCV convention, i.e., that x points right, y down, and z away from the camera (forward).
-
-# BibTeX
-
-```
-@inproceedings{szymanowicz24splatter,
-      title={Splatter Image: Ultra-Fast Single-View 3D Reconstruction},
-      author={Stanislaw Szymanowicz and Christian Rupprecht and Andrea Vedaldi},
-      year={2024},
-      booktitle={The IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
-}
-```
-
-# Acknowledgements
-
-S. Szymanowicz is supported by an EPSRC Doctoral Training Partnerships Scholarship (DTP) EP/R513295/1 and the Oxford-Ashton Scholarship.
-A. Vedaldi is supported by ERC-CoG UNION 101001212.
-We thank Eldar Insafutdinov for his help with installation requirements.
