@@ -1,4 +1,4 @@
-# splatter-image
+# splatter-image++
 Official implementation of **"Splatter Image: Ultra-Fast Single-View 3D Reconstruction" (CVPR 2024)**
 
 [16 Apr 2024] Several big updates to the project since the first release:
@@ -29,8 +29,10 @@ If that is not the case (TUM Cluster) use `env+cu116.yaml` so CUDA will be insta
 
 2. Install Gaussian Splatting renderer:
 ```
-git clone git@github.com:graphdeco-inria/diff-gaussian-rasterization.git
-pip install diff-gaussian-rasterization 
+git clone git@github.com:splatter-works/gaussian-splatting.git
+cd gaussian-splatting 
+git submodule update --init --recursive
+pip install submodules/diff-gaussian-rasterization 
 ```
 3. If you want to train on CO3D data you will need to install Pytorch3D 0.7.2. (This is only needed for preprocessing of data.) See instructions [here](https://github.com/facebookresearch/pytorch3d/blob/main/INSTALL.md). It is recommended to install with pip from a pre-built binary. Find a compatible binary [here](https://anaconda.org/pytorch3d/pytorch3d/files?page=5) and install it with `pip`. For example, with Python 3.8, Pytorch 1.13.0, CUDA 11.6 run
 `pip install --no-index --no-cache-dir pytorch3d -f https://anaconda.org/pytorch3d/pytorch3d/0.7.2/download/linux-64/pytorch3d-0.7.2-py38_cu116_pyt1130.tar.bz2`.
